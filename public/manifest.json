@@ -1,0 +1,21 @@
+{
+  "id": "DEINE-EXTENSION-ID-HIER",
+  "name": "Meine TC Extension",
+  "description": "Beschreibung deiner Extension",
+  "version": "1.0.0",
+  "vendor": {
+    "name": "Dein Name",
+    "url": "https://deine-vercel-url.vercel.app"
+  },
+  "icon": {
+    "48": "icon.svg"
+  },
+  "extensions": [
+    {
+      "type": "viewer",
+      "url": "https://deine-vercel-url.vercel.app",
+      "icon": "icon.svg",
+      "title": "Meine TC Extension"
+    }
+  ]
+}

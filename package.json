@@ -1,0 +1,26 @@
+{
+  "name": "tc-extension-template",
+  "version": "1.0.0",
+  "description": "Trimble Connect Extension Template",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "trimble-connect-workspace-api": "^0.3.34",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.1"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true
+  }
+}
