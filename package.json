@@ -1,7 +1,7 @@
 {
-  "name": "tc-extension-template",
+  "name": "tc-team-permission-manager",
   "version": "1.0.0",
-  "description": "Trimble Connect Extension Template",
+  "description": "Trimble Connect Web Extension fuer Team- und Berechtigungsverwaltung",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
