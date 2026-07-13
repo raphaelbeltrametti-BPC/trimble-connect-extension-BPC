@@ -26,6 +26,14 @@ Folder-Permissions als Dry-Run vor, bevor sie angewendet werden.
 - Die Excel-Datei nutzt ausgeschriebene Werte, nicht nur `V/L/K`.
 - Die API-Basis ist regional, z.B. EU: `https://app21.connect.trimble.com/tc/api/2.0`.
 - Lokale Entwicklung laeuft gemaess Konzept auf `http://localhost:3000`.
+- Im Manifest gibt es zwei getrennte Felder: `type` ist der `PlacementType`
+  (`panel` | `properties` | `settings` | `popover` | `page`) und steuert die
+  Darstellung; `extensionType` ist ein Array (`["project"]` | `["3dviewer"]`)
+  und steuert, ob die Extension im Projekt-Explorer oder im 3D-Viewer
+  registriert wird. Der alte Wert `"type": "project"` war fachlich falsch
+  (kein gueltiger PlacementType) und fuehrte dazu, dass Trimble Connect die
+  Extension als 3D-Viewer-Erweiterung interpretiert hat statt als
+  Projekt-Extension. Korrekt: `"type": "panel", "extensionType": ["project"]`.
 
 ## Entwicklung
 
@@ -43,10 +51,16 @@ npm.cmd run build
 
 ## Registrierung in Trimble Connect
 
-1. Extension als Project Extension registrieren.
-2. Lokale URL fuer Entwicklung: `http://localhost:3000`.
-3. Produktions-URL im Manifest und in Trimble Connect auf die Vercel-URL setzen.
-4. In der App die richtige API-Region waehlen, bei Schweizer/EU-Projekten meist `EU`.
+1. Extension unter **Projekt > Einstellungen > Extensions** registrieren
+   (nicht unter 3D-Viewer > Einstellungen > Extensions — das erzeugt eine
+   3D-Viewer-Erweiterung statt einer Projekt-Extension im Explorer).
+2. Falls die Extension zuvor faelschlich im 3D-Viewer registriert wurde: dort
+   entfernen und stattdessen unter Projekt > Einstellungen > Extensions mit
+   der Manifest-URL neu hinzufuegen, damit sie im linken Navigationsmenü und
+   im mittleren/rechten Bereich der Projektseite erscheint.
+3. Lokale URL fuer Entwicklung: `http://localhost:3000`.
+4. Produktions-URL im Manifest und in Trimble Connect auf die Vercel-URL setzen.
+5. In der App die richtige API-Region waehlen, bei Schweizer/EU-Projekten meist `EU`.
 
 ## Projektstruktur
 

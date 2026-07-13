@@ -12,10 +12,12 @@
   },
   "extensions": [
     {
-      "type": "project",
+      "type": "panel",
+      "extensionType": ["project"],
       "url": "https://trimble-connect-extension-bpc.vercel.app",
       "icon": "icon.svg",
-      "title": "Team & Berechtigungsmanager"
+      "title": "Team & Berechtigungsmanager",
+      "description": "Teams und Ordnerberechtigungen aus einer CDE-Berechtigungsmatrix verwalten"
     }
   ]
 }
