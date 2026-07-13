@@ -26,14 +26,16 @@ Folder-Permissions als Dry-Run vor, bevor sie angewendet werden.
 - Die Excel-Datei nutzt ausgeschriebene Werte, nicht nur `V/L/K`.
 - Die API-Basis ist regional, z.B. EU: `https://app21.connect.trimble.com/tc/api/2.0`.
 - Lokale Entwicklung laeuft gemaess Konzept auf `http://localhost:3000`.
-- Im Manifest gibt es zwei getrennte Felder: `type` ist der `PlacementType`
-  (`panel` | `properties` | `settings` | `popover` | `page`) und steuert die
-  Darstellung; `extensionType` ist ein Array (`["project"]` | `["3dviewer"]`)
-  und steuert, ob die Extension im Projekt-Explorer oder im 3D-Viewer
-  registriert wird. Der alte Wert `"type": "project"` war fachlich falsch
-  (kein gueltiger PlacementType) und fuehrte dazu, dass Trimble Connect die
-  Extension als 3D-Viewer-Erweiterung interpretiert hat statt als
-  Projekt-Extension. Korrekt: `"type": "panel", "extensionType": ["project"]`.
+- Versuch, `"type": "panel"` und `"extensionType": ["project"]` selbst im
+  Manifest zu setzen, war falsch: Trimble Connect hat die URL dann als
+  "not a valid extension" abgelehnt. `extensionType` wird von Trimble Connect
+  selbst gesetzt, je nachdem ob man die Manifest-URL unter Projekt- oder unter
+  3D-Viewer-Einstellungen eintraegt — es ist kein Feld, das der Manifest-Autor
+  liefert. Das Manifest bleibt daher bei den dokumentierten Feldern
+  `url`, `icon`, `title`, `description` (ohne eigenes `type`/`extensionType`).
+  Ob die Extension im Projekt-Explorer oder im 3D-Viewer erscheint, wird
+  ausschliesslich dadurch bestimmt, unter welcher Einstellungsseite man die
+  Manifest-URL registriert (siehe "Registrierung in Trimble Connect").
 
 ## Entwicklung
 

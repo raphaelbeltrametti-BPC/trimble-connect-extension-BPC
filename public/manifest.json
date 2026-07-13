@@ -12,8 +12,6 @@
   },
   "extensions": [
     {
-      "type": "panel",
-      "extensionType": ["project"],
       "url": "https://trimble-connect-extension-bpc.vercel.app",
       "icon": "icon.svg",
       "title": "Team & Berechtigungsmanager",
