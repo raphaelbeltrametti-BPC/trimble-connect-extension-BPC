@@ -1,21 +1,7 @@
 {
-  "id": "1c14ee22-5598-4d41-a4ae-8f8ca2556bd9",
-  "name": "Team & Berechtigungsmanager",
+  "url": "https://trimble-connect-extension-bpc.vercel.app",
+  "title": "Team & Berechtigungsmanager",
+  "icon": "https://trimble-connect-extension-bpc.vercel.app/icon.svg",
   "description": "Teams und Ordnerberechtigungen aus einer CDE-Berechtigungsmatrix verwalten",
-  "version": "1.0.0",
-  "vendor": {
-    "name": "Raphael Beltrametti",
-    "url": "https://trimble-connect-extension-bpc.vercel.app"
-  },
-  "icon": {
-    "48": "icon.svg"
-  },
-  "extensions": [
-    {
-      "url": "https://trimble-connect-extension-bpc.vercel.app",
-      "icon": "icon.svg",
-      "title": "Team & Berechtigungsmanager",
-      "description": "Teams und Ordnerberechtigungen aus einer CDE-Berechtigungsmatrix verwalten"
-    }
-  ]
+  "enabled": true
 }
