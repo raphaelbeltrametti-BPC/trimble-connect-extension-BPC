@@ -174,10 +174,16 @@ export class TrimbleClient {
     return folders;
   }
 
+  /**
+   * The API rejects the request outright if the ACL object contains a "NO_ACCESS" field at all
+   * ("Invalid ACL field. Only supported fields are: READ and FULL_ACCESS") - actors simply
+   * omitted from both arrays get no access, there is no explicit deny-list field.
+   */
   async updateFolderPermissions(folderId: string, acl: FolderAcl, inheritance = false): Promise<void> {
+    const supportedAcl = { READ: acl.READ, FULL_ACCESS: acl.FULL_ACCESS };
     await this.request(`/folders/fs/${encodeURIComponent(folderId)}/permissions`, {
       method: "PATCH",
-      body: JSON.stringify({ acl, inheritance }),
+      body: JSON.stringify({ acl: supportedAcl, inheritance }),
     });
   }
 

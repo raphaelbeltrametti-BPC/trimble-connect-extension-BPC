@@ -281,6 +281,18 @@ export default function App() {
     let applied = 0;
     for (let index = 0; index < readyItems.length; index += 1) {
       const item = readyItems[index];
+      const oversized = (["READ", "FULL_ACCESS"] as const).filter((level) => item.acl[level].length > 100);
+
+      if (oversized.length > 0) {
+        addLog(
+          "warning",
+          `Uebersprungen: ${item.folderPath} hat mehr als 100 Gruppen bei ${oversized.join(", ")} (API-Limit).`,
+          "Diese Zeile muss manuell in mehreren Schritten in Trimble Connect gepflegt werden."
+        );
+        setProgress({ current: index + 1, total: readyItems.length, label: "Berechtigungen anwenden" });
+        continue;
+      }
+
       try {
         await client.updateFolderPermissions(item.folderId!, item.acl, false);
         applied += 1;
