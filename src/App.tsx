@@ -207,10 +207,26 @@ export default function App() {
         throw new Error("Das Projekt liefert keine rootId. Bitte API-Region und Projekt-ID pruefen.");
       }
 
+      addLog("info", `Root-Ordner-ID: ${details.rootId}`, `Basis-URL: ${baseUrl}`);
+
       setProgress({ current: 0, total: 1, label: "Ordner scannen" });
       const tree = await client.listFolderTree(details.rootId);
       setFolders(tree);
       addLog("success", `${tree.length} Projektordner gescannt.`);
+
+      if (tree.length === 0) {
+        try {
+          const debug = await client.fetchRawDebug(`/folders/${encodeURIComponent(details.rootId)}/items`);
+          addLog(
+            "warning",
+            `Diagnose: Root-Ordner liefert 0 Elemente (HTTP ${debug.status}).`,
+            `URL: ${debug.url}\n\n${debug.body.slice(0, 2000)}`
+          );
+        } catch (debugError) {
+          addLog("warning", "Diagnose-Aufruf fehlgeschlagen.", formatError(debugError));
+        }
+      }
+
       return tree;
     } catch (error) {
       addLog("error", "Projektordner konnten nicht gescannt werden.", formatError(error));

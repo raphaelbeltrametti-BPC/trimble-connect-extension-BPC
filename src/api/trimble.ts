@@ -98,6 +98,25 @@ export class TrimbleClient {
     await this.request(`/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
   }
 
+  /**
+   * Performs one raw, non-throwing request and returns status/body verbatim, so the caller can
+   * surface exactly what the Trimble API sent back (e.g. in the UI log) without needing browser
+   * devtools access to the extension's iframe.
+   */
+  async fetchRawDebug(pathOrUrl: string): Promise<{ url: string; status: number; body: string }> {
+    await this.waitForSlot();
+    const token = await this.getToken();
+    const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${this.baseUrl}${pathOrUrl}`;
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const body = await response.text();
+    return { url, status: response.status, body };
+  }
+
   async listFolderTree(rootFolderId: string, maxDepth = 20): Promise<TCFolder[]> {
     const folders: TCFolder[] = [];
     const queue: Array<{ id: string; path: string; depth: number }> = [{ id: rootFolderId, path: "", depth: 0 }];
