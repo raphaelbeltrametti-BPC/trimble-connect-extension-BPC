@@ -99,9 +99,9 @@ export class TrimbleClient {
   }
 
   /**
-   * Performs one raw, non-throwing request and returns status/body verbatim, so the caller can
-   * surface exactly what the Trimble API sent back (e.g. in the UI log) without needing browser
-   * devtools access to the extension's iframe.
+   * Performs one raw request and returns status/body verbatim (even on non-2xx), so the caller
+   * can surface exactly what the Trimble API sent back (e.g. in the UI log) without needing
+   * browser devtools access to the extension's iframe.
    */
   async fetchRawDebug(pathOrUrl: string): Promise<{ url: string; status: number; body: string }> {
     await this.waitForSlot();
@@ -158,20 +158,39 @@ export class TrimbleClient {
     });
   }
 
+  /**
+   * The `/folders/{id}/items` endpoint returns a plain JSON array of items, not an object with
+   * an `items` property. Pagination (if any) comes via an RFC5988 `Link: <url>; rel="next"`
+   * response header rather than a body field, so this uses requestRaw() to see headers too.
+   */
   private async listFolderItems(folderId: string): Promise<RawFolderItem[]> {
     const items: RawFolderItem[] = [];
     let next: string | undefined = `/folders/${encodeURIComponent(folderId)}/items`;
 
     while (next) {
-      const response: FolderItemsResponse = await this.request<FolderItemsResponse>(next);
-      items.push(...(response.items ?? []));
-      next = response.next ?? response.links?.next?.href;
+      const { body, headers } = await this.requestRaw(next);
+      const parsed: FolderItemsResponse | RawFolderItem[] = body ? JSON.parse(body) : [];
+      const pageItems = Array.isArray(parsed) ? parsed : parsed.items ?? [];
+      items.push(...pageItems);
+
+      next = parseNextLink(headers) ?? (Array.isArray(parsed) ? undefined : parsed.next ?? parsed.links?.next?.href);
     }
 
     return items;
   }
 
   private async request<T>(pathOrUrl: string, init: RequestInit = {}): Promise<T> {
+    const { body } = await this.requestRaw(pathOrUrl, init);
+    if (!body) return undefined as T;
+
+    try {
+      return JSON.parse(body) as T;
+    } catch {
+      return body as T;
+    }
+  }
+
+  private async requestRaw(pathOrUrl: string, init: RequestInit = {}): Promise<{ body: string; headers: Headers }> {
     await this.waitForSlot();
 
     const token = await this.getToken();
@@ -195,13 +214,7 @@ export class TrimbleClient {
       throw new TrimbleApiError(response.status, `${response.status} ${response.statusText}`, body);
     }
 
-    if (!body) return undefined as T;
-
-    try {
-      return JSON.parse(body) as T;
-    } catch {
-      return body as T;
-    }
+    return { body, headers: response.headers };
   }
 
   private async waitForSlot(): Promise<void> {
@@ -217,4 +230,13 @@ export class TrimbleClient {
 function isFolder(item: RawFolderItem): boolean {
   const type = String(item.tp ?? item.type ?? "").toUpperCase();
   return type === "FOLDER" || type === "DIR" || type === "DIRECTORY";
+}
+
+function parseNextLink(headers: Headers): string | undefined {
+  const link = headers.get("Link") ?? headers.get("link");
+  if (!link) return undefined;
+
+  const nextEntry = link.split(",").map((part) => part.trim()).find((part) => /rel="?next"?/i.test(part));
+  const match = nextEntry?.match(/^<([^>]+)>/);
+  return match?.[1];
 }
