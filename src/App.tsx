@@ -37,6 +37,7 @@ export default function App() {
   const [busy, setBusy] = useState("");
   const [progress, setProgress] = useState<ProgressState>({ current: 0, total: 0, label: "" });
   const [allowApply, setAllowApply] = useState(false);
+  const [allowDeleteGroups, setAllowDeleteGroups] = useState(false);
 
   useEffect(() => {
     if (regionTouched || !project?.location) return;
@@ -72,6 +73,12 @@ export default function App() {
     if (!workbook) return [];
     const existing = new Set(groups.map((group) => normalizeLookup(group.name)));
     return workbook.teamNames.filter((teamName) => !existing.has(normalizeLookup(teamName)));
+  }, [groups, workbook]);
+
+  const unusedGroups = useMemo(() => {
+    if (!workbook) return [];
+    const wanted = new Set(workbook.teamNames.map((name) => normalizeLookup(name)));
+    return groups.filter((group) => !wanted.has(normalizeLookup(group.name)));
   }, [groups, workbook]);
 
   const planStats = useMemo(() => {
@@ -189,6 +196,40 @@ export default function App() {
       setBusy("");
       setProgress({ current: 0, total: 0, label: "" });
     }
+  }
+
+  async function deleteUnusedGroups() {
+    if (!allowDeleteGroups) {
+      addLog("warning", "Loeschen blockiert: Checkbox fuer Gruppen-Loeschung ist nicht gesetzt.");
+      return;
+    }
+
+    if (unusedGroups.length === 0) {
+      addLog("warning", "Keine ungenutzten Gruppen zum Loeschen.");
+      return;
+    }
+
+    setBusy("delete-groups");
+    setProgress({ current: 0, total: unusedGroups.length, label: "Gruppen loeschen" });
+
+    let deleted = 0;
+    for (let index = 0; index < unusedGroups.length; index += 1) {
+      const group = unusedGroups[index];
+      try {
+        await client.deleteGroup(group.id);
+        deleted += 1;
+        addLog("success", `Gruppe geloescht: ${group.name}.`);
+      } catch (error) {
+        addLog("error", `Gruppe konnte nicht geloescht werden: ${group.name}.`, formatError(error));
+      }
+      setProgress({ current: index + 1, total: unusedGroups.length, label: "Gruppen loeschen" });
+    }
+
+    setGroups((current) => current.filter((group) => !unusedGroups.some((removed) => removed.id === group.id)));
+    setAllowDeleteGroups(false);
+    setBusy("");
+    setProgress({ current: 0, total: 0, label: "" });
+    addLog("info", `Gruppen-Loeschung fertig. Geloescht: ${deleted}, Fehler: ${unusedGroups.length - deleted}.`);
   }
 
   async function scanFolders() {
@@ -381,12 +422,16 @@ export default function App() {
             workbook={workbook}
             groups={groups}
             missingTeamNames={missingTeamNames}
+            unusedGroups={unusedGroups}
             newGroupName={newGroupName}
             setNewGroupName={setNewGroupName}
+            allowDeleteGroups={allowDeleteGroups}
+            setAllowDeleteGroups={setAllowDeleteGroups}
             onWorkbook={handleWorkbook}
             onLoadGroups={loadGroups}
             onCreateGroup={createSingleGroup}
             onImportGroups={importMissingGroups}
+            onDeleteUnusedGroups={deleteUnusedGroups}
           />
         )}
 
@@ -432,12 +477,16 @@ interface TeamsTabProps {
   workbook: WorkbookModel | null;
   groups: TCGroup[];
   missingTeamNames: string[];
+  unusedGroups: TCGroup[];
   newGroupName: string;
   setNewGroupName: (value: string) => void;
+  allowDeleteGroups: boolean;
+  setAllowDeleteGroups: (value: boolean) => void;
   onWorkbook: (file: File) => void;
   onLoadGroups: () => void;
   onCreateGroup: () => void;
   onImportGroups: () => void;
+  onDeleteUnusedGroups: () => void;
 }
 
 function TeamsTab(props: TeamsTabProps) {
@@ -499,6 +548,39 @@ function TeamsTab(props: TeamsTabProps) {
               )}
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section className="panel span-2">
+        <h2>Ungenutzte Gruppen</h2>
+        <p>
+          Gruppen, die in der geladenen Excel-Matrix (ueber alle Phasen) namentlich nicht mehr
+          vorkommen. Loeschen betrifft die Gruppe global in Trimble Connect, auch wenn sie
+          ausserhalb dieser Matrix noch irgendwo Berechtigungen haelt.
+        </p>
+        <MetricGrid metrics={[["Ungenutzt", props.unusedGroups.length]]} />
+        {props.unusedGroups.length > 0 && (
+          <div className="compact-list">
+            {props.unusedGroups.slice(0, 24).map((group) => <span key={group.id}>{group.name}</span>)}
+            {props.unusedGroups.length > 24 && <span>+{props.unusedGroups.length - 24}</span>}
+          </div>
+        )}
+        <div className="apply-row">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={props.allowDeleteGroups}
+              onChange={(event) => props.setAllowDeleteGroups(event.target.checked)}
+            />
+            <span>Loeschen wirklich durchfuehren</span>
+          </label>
+          <button
+            className="danger"
+            onClick={props.onDeleteUnusedGroups}
+            disabled={props.busy || !props.allowDeleteGroups || props.unusedGroups.length === 0}
+          >
+            Ungenutzte Gruppen loeschen
+          </button>
         </div>
       </section>
     </div>
