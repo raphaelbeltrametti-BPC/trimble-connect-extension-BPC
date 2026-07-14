@@ -117,35 +117,58 @@ export class TrimbleClient {
     return { url, status: response.status, body };
   }
 
-  async listFolderTree(rootFolderId: string, maxDepth = 20): Promise<TCFolder[]> {
+  /**
+   * Scans the folder tree level by level, firing up to `concurrency` sibling requests at once
+   * per level instead of one request at a time. With trees of several hundred folders spread
+   * across many phases, a fully sequential scan can take minutes; batching cuts that roughly by
+   * the concurrency factor while still respecting the client's per-request pacing.
+   */
+  async listFolderTree(
+    rootFolderId: string,
+    options: { maxDepth?: number; concurrency?: number; onProgress?: (scanned: number, found: number) => void } = {}
+  ): Promise<TCFolder[]> {
+    const { maxDepth = 20, concurrency = 5, onProgress } = options;
     const folders: TCFolder[] = [];
-    const queue: Array<{ id: string; path: string; depth: number }> = [{ id: rootFolderId, path: "", depth: 0 }];
+    let currentLevel: Array<{ id: string; path: string; depth: number }> = [
+      { id: rootFolderId, path: "", depth: 0 },
+    ];
+    let scanned = 0;
 
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (!current || current.depth > maxDepth) continue;
+    while (currentLevel.length > 0) {
+      const nextLevel: typeof currentLevel = [];
 
-      const children = await this.listFolderItems(current.id);
-      for (const child of children) {
-        if (!isFolder(child)) continue;
+      for (let i = 0; i < currentLevel.length; i += concurrency) {
+        const batch = currentLevel.slice(i, i + concurrency);
+        const batchChildren = await Promise.all(batch.map((node) => this.listFolderItems(node.id)));
 
-        const name = String(child.nm ?? child.name ?? "");
-        const id = String(child.id ?? "");
-        if (!id || !name) continue;
+        batch.forEach((node, index) => {
+          scanned += 1;
+          if (node.depth > maxDepth) return;
 
-        const path = current.path ? `${current.path}/${name}` : name;
-        const folder: TCFolder = {
-          id,
-          name,
-          type: String(child.tp ?? child.type ?? "FOLDER"),
-          parentId: child.pid ?? child.parentId,
-          path,
-          depth: current.depth,
-        };
+          for (const child of batchChildren[index]) {
+            if (!isFolder(child)) continue;
 
-        folders.push(folder);
-        queue.push({ id, path, depth: current.depth + 1 });
+            const name = String(child.nm ?? child.name ?? "");
+            const id = String(child.id ?? "");
+            if (!id || !name) continue;
+
+            const path = node.path ? `${node.path}/${name}` : name;
+            folders.push({
+              id,
+              name,
+              type: String(child.tp ?? child.type ?? "FOLDER"),
+              parentId: child.pid ?? child.parentId,
+              path,
+              depth: node.depth,
+            });
+            nextLevel.push({ id, path, depth: node.depth + 1 });
+          }
+        });
+
+        onProgress?.(scanned, folders.length);
       }
+
+      currentLevel = nextLevel;
     }
 
     return folders;

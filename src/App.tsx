@@ -209,8 +209,12 @@ export default function App() {
 
       addLog("info", `Root-Ordner-ID: ${details.rootId}`, `Basis-URL: ${baseUrl}`);
 
-      setProgress({ current: 0, total: 1, label: "Ordner scannen" });
-      const tree = await client.listFolderTree(details.rootId);
+      setProgress({ current: 0, total: 0, label: "Ordner scannen (0 gefunden)" });
+      const tree = await client.listFolderTree(details.rootId, {
+        onProgress: (scanned, found) => {
+          setProgress({ current: scanned, total: scanned, label: `Ordner scannen (${found} gefunden)` });
+        },
+      });
       setFolders(tree);
       addLog("success", `${tree.length} Projektordner gescannt.`);
 
