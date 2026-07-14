@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URLS, TrimbleApiError, TrimbleClient } from "./api/trimble";
 import { useApi } from "./hooks/useApi";
 import { buildPermissionPlan } from "./permissions/planner";
@@ -14,6 +14,7 @@ import type {
   WorkbookModel,
 } from "./types";
 import { normalizeLookup } from "./utils/text";
+import { loadStoredWorkbook, saveStoredWorkbook } from "./utils/workbookStorage";
 import "./index.css";
 
 type TabId = "teams" | "permissions" | "log";
@@ -49,6 +50,29 @@ export default function App() {
   const effectiveProject = project ?? (manualProjectId.trim()
     ? { id: manualProjectId.trim(), name: "Manuelles Projekt" }
     : null);
+
+  const restoredWorkbookRef = useRef(false);
+
+  useEffect(() => {
+    if (restoredWorkbookRef.current || workbook || !effectiveProject?.id) return;
+    restoredWorkbookRef.current = true;
+
+    const stored = loadStoredWorkbook(effectiveProject.id);
+    if (stored) {
+      setWorkbook(stored);
+      setSelectedSheet(stored.sheetNames[0] ?? "");
+      addLog(
+        "info",
+        `Zuletzt geladene Excel-Matrix wiederhergestellt: ${stored.fileName}.`,
+        `${stored.sheetNames.length} Phasen, ${stored.teamNames.length} Teams.`
+      );
+    }
+  }, [effectiveProject?.id, workbook]);
+
+  useEffect(() => {
+    if (!workbook || !effectiveProject?.id) return;
+    saveStoredWorkbook(effectiveProject.id, workbook);
+  }, [workbook, effectiveProject?.id]);
 
   const client = useMemo(
     () =>
