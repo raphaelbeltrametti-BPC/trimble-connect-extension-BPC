@@ -71,7 +71,14 @@ export default function App() {
 
   useEffect(() => {
     if (!workbook || !effectiveProject?.id) return;
-    saveStoredWorkbook(effectiveProject.id, workbook);
+    const result = saveStoredWorkbook(effectiveProject.id, workbook);
+    if (!result.ok) {
+      addLog(
+        "warning",
+        "Matrix konnte nicht lokal gespeichert werden (ueberlebt keinen Hardreload).",
+        result.error
+      );
+    }
   }, [workbook, effectiveProject?.id]);
 
   const client = useMemo(
@@ -437,6 +444,16 @@ export default function App() {
         <button className={activeTab === "teams" ? "active" : ""} onClick={() => setActiveTab("teams")}>Teams</button>
         <button className={activeTab === "permissions" ? "active" : ""} onClick={() => setActiveTab("permissions")}>Berechtigungen</button>
         <button className={activeTab === "log" ? "active" : ""} onClick={() => setActiveTab("log")}>Protokoll</button>
+        <button
+          className="tab-action"
+          onClick={async () => {
+            const { downloadMatrixTemplate } = await import("./excel/template");
+            downloadMatrixTemplate();
+            addLog("info", "Matrix-Vorlage heruntergeladen.");
+          }}
+        >
+          Vorlage exportieren
+        </button>
       </nav>
 
       <main className="content">
