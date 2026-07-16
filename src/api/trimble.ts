@@ -34,6 +34,20 @@ interface FolderItemsResponse {
   };
 }
 
+interface RawProjectListItem {
+  id?: string;
+  role?: string;
+}
+
+interface ProjectsPagedResponse {
+  items?: RawProjectListItem[];
+  links?: {
+    next?: {
+      href?: string;
+    };
+  };
+}
+
 export class TrimbleApiError extends Error {
   readonly status: number;
   readonly body: string;
@@ -66,8 +80,27 @@ export class TrimbleClient {
       name: String(project.name ?? ""),
       location: project.location,
       rootId: project.rootId,
-      role: typeof project.role === "string" ? project.role.toUpperCase() : undefined,
     };
+  }
+
+  /**
+   * GET /projects/{id} (v2.0, used elsewhere in this client) does not return the caller's role.
+   * That field only exists on the v2.1 project list endpoint (?fields=role), which has no by-id
+   * variant - so this pages through the caller's projects (most recently visited first, which is
+   * where the currently open project will normally be) looking for a matching id.
+   */
+  async getProjectRole(projectId: string, maxPages = 4): Promise<string | undefined> {
+    const v21Base = this.baseUrl.replace(/\/2\.0$/, "/2.1");
+    let url: string | undefined = `${v21Base}/projects?fields=role&pageSize=500`;
+
+    for (let page = 0; url && page < maxPages; page += 1) {
+      const response: ProjectsPagedResponse = await this.request<ProjectsPagedResponse>(url);
+      const match = (response.items ?? []).find((item) => String(item.id) === projectId);
+      if (match) return typeof match.role === "string" ? match.role.toUpperCase() : undefined;
+      url = response.links?.next?.href;
+    }
+
+    return undefined;
   }
 
   async listGroups(projectId: string): Promise<TCGroup[]> {

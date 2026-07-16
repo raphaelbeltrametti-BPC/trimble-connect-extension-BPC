@@ -22,7 +22,7 @@ import "./index.css";
 type TabId = "teams" | "folders" | "permissions" | "log";
 
 export default function App() {
-  const { api, connected, connectionError, accessToken, project, hostName, refreshAccessToken } = useApi();
+  const { connected, connectionError, accessToken, project, hostName, refreshAccessToken } = useApi();
   const [activeTab, setActiveTab] = useState<TabId>("teams");
   const [region, setRegion] = useState<ApiRegion>("eu");
   const [regionTouched, setRegionTouched] = useState(false);
@@ -115,46 +115,24 @@ export default function App() {
     setAccessState("checking");
     setAccessError("");
 
-    /**
-     * Two independent signals, either one sufficing, so a hiccup in one API doesn't lock out a
-     * real admin: the Workspace API's project.getMembers() (already-connected postMessage
-     * channel, no region/token dependency) and the REST project.role field (needs region+token,
-     * which may not be settled yet on the very first check).
-     */
-    (async () => {
-      const roles: string[] = [];
-      const errors: string[] = [];
-
-      try {
-        if (!api) throw new Error("Workspace API nicht verbunden.");
-        const [members, me] = await Promise.all([api.project.getMembers(), api.user.getUser()]);
-        const myEmail = me.email?.toLowerCase();
-        const match = members.find((member) => member.id === me.id || (myEmail && member.email?.toLowerCase() === myEmail));
-        if (match?.role) roles.push(match.role.toUpperCase());
-        else if (!match) errors.push("Workspace API: eigener Nutzer nicht in Projektmitgliedern gefunden.");
-      } catch (error) {
-        errors.push(`Workspace API: ${formatError(error)}`);
-      }
-
-      try {
-        const details = await client.getProject(effectiveProject.id);
-        if (details.role) roles.push(details.role);
-      } catch (error) {
-        errors.push(`REST API: ${formatError(error)}`);
-      }
-
-      if (cancelled) return;
-
-      const isAdmin = roles.some((role) => role.includes("ADMIN"));
-      setAccessRole(roles.join(", "));
-      setAccessError(isAdmin ? "" : errors.join(" | "));
-      setAccessState(isAdmin ? "admin" : "denied");
-    })();
+    client
+      .getProjectRole(effectiveProject.id)
+      .then((role) => {
+        if (cancelled) return;
+        setAccessRole(role ?? "");
+        setAccessState(role?.includes("ADMIN") ? "admin" : "denied");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setAccessRole("");
+        setAccessError(formatError(error));
+        setAccessState("denied");
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [api, client, effectiveProject?.id]);
+  }, [client, effectiveProject?.id]);
 
   const currentMatrix = useMemo(
     () => workbook?.matrices.find((matrix) => matrix.sheetName === selectedSheet) ?? null,
@@ -557,7 +535,7 @@ export default function App() {
             <>
               <h2>Keine Berechtigung</h2>
               <p>Diese Extension steht nur Projekt-Administrator:innen zur Verfuegung.</p>
-              {accessRole && <p className="access-detail">Erkannte Rolle(n): {accessRole}</p>}
+              {accessRole && <p className="access-detail">Erkannte Rolle: {accessRole}</p>}
               {accessError && <p className="access-detail">Pruefung fehlgeschlagen: {accessError}</p>}
             </>
           )}

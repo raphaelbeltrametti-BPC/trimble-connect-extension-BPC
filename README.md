@@ -14,11 +14,19 @@ Folder-Permissions als Dry-Run vor, bevor sie angewendet werden.
 - Excel-Parser fuer Matrixwerte `V`, `L`, `K`, `Vollzugriff`, `Lesezugriff`, `Kein Zugriff`
 - Dry-Run fuer `FULL_ACCESS`, `READ`, `NO_ACCESS`
 - Anwenden per `PATCH /folders/fs/{folderId}/permissions`
-- Zugriffssperre: nur Nutzer mit Projekt-Rolle `ADMIN` (Feld `role` aus
-  `GET /projects/{id}`) sehen die eigentliche Extension; alle anderen sehen
-  nur einen "Keine Berechtigung"-Bildschirm. Bei Pruef-Fehlern (z.B. falsche
-  Region) wird sicherheitshalber ebenfalls gesperrt, mit sichtbarer
-  Fehlermeldung auf dem Sperrbildschirm.
+- Zugriffssperre: nur Nutzer mit Projekt-Rolle `ADMIN` sehen die eigentliche
+  Extension; alle anderen sowie fehlgeschlagene Pruefungen (z.B. falsche
+  Region) sehen nur einen "Keine Berechtigung"-Bildschirm mit sichtbarer
+  Rolle/Fehlermeldung.
+  - `GET /projects/{id}` (v2.0, sonst ueberall verwendet) liefert **kein**
+    `role`-Feld.
+  - `project.getMembers()` aus der Workspace API ist im Projekt-Extension-
+    Kontext nicht verfuegbar ("not applicable here").
+  - Einzig funktionierende Quelle: `GET /2.1/projects?fields=role` (Liste,
+    kein Einzelabruf per ID) liefert pro Projekt die Rolle des aufrufenden
+    Nutzers. `TrimbleClient.getProjectRole()` blaettert diese Liste
+    (Standard-Sortierung nach zuletzt besucht) nach der passenden
+    Projekt-ID durch.
 
 ## Wichtige Korrekturen zur ersten Voreinstellung
 

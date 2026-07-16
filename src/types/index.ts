@@ -7,8 +7,6 @@ export interface TCProject {
   name: string;
   location?: string;
   rootId?: string;
-  /** The caller's project membership role, e.g. "ADMIN", "USER" (uppercase, per GET /projects/{id}). */
-  role?: string;
 }
 
 export interface TCGroup {
