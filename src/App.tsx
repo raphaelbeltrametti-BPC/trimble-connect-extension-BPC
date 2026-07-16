@@ -391,6 +391,16 @@ export default function App() {
         <div className="status-stack">
           <span className={connected ? "status ok" : "status muted"}>{connected ? "Workspace verbunden" : "Standalone"}</span>
           <span className={accessToken || manualToken ? "status ok" : "status warn"}>{accessToken || manualToken ? "Token bereit" : "Token fehlt"}</span>
+          <a
+            className="help-button"
+            href="/hilfe.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Anleitung oeffnen"
+            aria-label="Anleitung oeffnen"
+          >
+            ?
+          </a>
         </div>
       </header>
 

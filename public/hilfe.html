@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Team &amp; Berechtigungsmanager – Anleitung</title>
+<meta name="description" content="Voraussetzungen, Einrichtung und Schritt-für-Schritt-Anleitung für die Trimble Connect Extension von BuildingPoint Schweiz AG." />
+<link rel="icon" href="/icon.svg" type="image/svg+xml" />
+<style>
+  :root {
+    --bg: #f2f5f8;
+    --paper: #ffffff;
+    --paper-sunken: #f6f8fa;
+    --ink: #1f2933;
+    --muted: #5b6b7a;
+    --line: #d8dde3;
+    --line-strong: #c1c9d1;
+    --accent: #005f9e;
+    --accent-dark: #004b7d;
+    --accent-soft: #e7f2fb;
+    --success: #1f7a4d;
+    --success-soft: #e8f5ee;
+    --warn: #a65f00;
+    --warn-soft: #fff3d6;
+    --danger: #b42318;
+    --danger-soft: #fde8e6;
+    --radius: 8px;
+    --font-ui: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: Consolas, "SF Mono", "Courier New", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10161c;
+      --paper: #182129;
+      --paper-sunken: #141c23;
+      --ink: #e8edf2;
+      --muted: #96a5b3;
+      --line: #2a3742;
+      --line-strong: #3a4753;
+      --accent: #5aaee6;
+      --accent-dark: #86c6f2;
+      --accent-soft: rgba(90, 174, 230, 0.14);
+      --success: #55b98a;
+      --success-soft: rgba(85, 185, 138, 0.14);
+      --warn: #d9a04a;
+      --warn-soft: rgba(217, 160, 74, 0.14);
+      --danger: #e2766a;
+      --danger-soft: rgba(226, 118, 106, 0.14);
+    }
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  a {
+    color: var(--accent);
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 760px);
+    justify-content: center;
+    gap: 40px;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 40px 24px 96px;
+  }
+
+  header.hero {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 8px;
+  }
+
+  .hero-badge {
+    flex: 0 0 auto;
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .hero-badge img {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .hero-text .eyebrow {
+    color: var(--muted);
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .hero-text h1 {
+    margin: 2px 0 0;
+    font-size: 26px;
+    font-weight: 750;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 40px;
+    align-self: start;
+    height: max-content;
+    font-size: 13.5px;
+  }
+
+  nav.toc .toc-label {
+    margin: 0 0 10px;
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  nav.toc ol {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: toc;
+  }
+
+  nav.toc a {
+    display: block;
+    padding: 6px 10px;
+    border-radius: 6px;
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  nav.toc a::before {
+    counter-increment: toc;
+    content: counter(toc) "  ";
+    color: var(--line-strong);
+    font-variant-numeric: tabular-nums;
+  }
+
+  nav.toc a:hover {
+    background: var(--paper-sunken);
+    color: var(--ink);
+  }
+
+  main {
+    min-width: 0;
+  }
+
+  main > p.lede {
+    margin-top: 0;
+    color: var(--muted);
+    font-size: 16.5px;
+  }
+
+  section {
+    margin-top: 44px;
+    padding-top: 4px;
+  }
+
+  section h2 {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin: 0 0 14px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--line);
+    font-size: 20px;
+    font-weight: 750;
+    letter-spacing: -0.005em;
+    text-wrap: balance;
+  }
+
+  section h3 {
+    margin: 24px 0 8px;
+    font-size: 15.5px;
+    font-weight: 700;
+  }
+
+  p {
+    margin: 10px 0;
+  }
+
+  ul, ol.steps {
+    margin: 10px 0;
+    padding-left: 22px;
+  }
+
+  li {
+    margin: 5px 0;
+  }
+
+  ol.steps {
+    counter-reset: step;
+    list-style: none;
+    padding-left: 0;
+    display: grid;
+    gap: 12px;
+    margin: 16px 0;
+  }
+
+  ol.steps li {
+    position: relative;
+    margin: 0;
+    padding: 12px 14px 12px 50px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+  }
+
+  ol.steps li::before {
+    counter-increment: step;
+    content: counter(step);
+    position: absolute;
+    left: 14px;
+    top: 12px;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12.5px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  ol.steps li strong {
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  code, .mono {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+  }
+
+  code {
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+    background: var(--paper-sunken);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+
+  .url-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--paper);
+  }
+
+  .url-box .mono {
+    overflow-wrap: anywhere;
+    color: var(--accent-dark);
+  }
+
+  .callout {
+    display: flex;
+    gap: 10px;
+    margin: 16px 0;
+    padding: 12px 14px;
+    border-left: 4px solid var(--accent);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    background: var(--accent-soft);
+  }
+
+  .callout .icon {
+    flex: 0 0 auto;
+    font-weight: 800;
+  }
+
+  .callout p {
+    margin: 0;
+  }
+
+  .callout p + p {
+    margin-top: 6px;
+  }
+
+  .callout.warn {
+    border-left-color: var(--warn);
+    background: var(--warn-soft);
+  }
+
+  .callout.danger {
+    border-left-color: var(--danger);
+    background: var(--danger-soft);
+  }
+
+  .callout .icon.warn-icon { color: var(--warn); }
+  .callout .icon.danger-icon { color: var(--danger); }
+  .callout .icon.info-icon { color: var(--accent); }
+
+  table {
+    width: 100%;
+    margin: 14px 0;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+
+  caption {
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 12.5px;
+    text-align: left;
+  }
+
+  th, td {
+    border-bottom: 1px solid var(--line);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th {
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .table-scroll {
+    overflow-x: auto;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 2px 9px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .pill.full { background: var(--success-soft); color: var(--success); }
+  .pill.read { background: var(--warn-soft); color: var(--warn); }
+  .pill.none { background: var(--line); color: var(--muted); }
+
+  .indent-demo {
+    margin: 14px 0;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.9;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  .indent-demo .l0 { color: var(--ink); font-weight: 700; }
+  .indent-demo .l1 { color: var(--ink); }
+  .indent-demo .l2 { color: var(--muted); }
+
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+  }
+
+  .card {
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--paper);
+  }
+
+  .card h4 {
+    margin: 0 0 6px;
+    font-size: 14px;
+  }
+
+  .card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+
+  footer {
+    grid-column: 1 / -1;
+    margin-top: 56px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+
+  @media (max-width: 860px) {
+    .shell {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    nav.toc {
+      position: static;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+    }
+
+    nav.toc ol {
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      grid-auto-flow: row;
+    }
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="hero">
+    <div class="hero-badge">
+      <img src="/icon.svg" alt="" />
+    </div>
+    <div class="hero-text">
+      <div class="eyebrow">Trimble Connect Web Extension · BuildingPoint Schweiz AG</div>
+      <h1>Team &amp; Berechtigungsmanager – Anleitung</h1>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Inhalt">
+    <p class="toc-label">Inhalt</p>
+    <ol>
+      <li><a href="#ueberblick">Überblick</a></li>
+      <li><a href="#voraussetzungen">Voraussetzungen</a></li>
+      <li><a href="#einrichtung">Einrichtung</a></li>
+      <li><a href="#matrix">Die Excel-Matrix</a></li>
+      <li><a href="#oberflaeche">Oberfläche</a></li>
+      <li><a href="#ablauf">Ablauf Schritt für Schritt</a></li>
+      <li><a href="#gruppen">Ungenutzte Gruppen</a></li>
+      <li><a href="#grenzen">Grenzen &amp; Hinweise</a></li>
+      <li><a href="#referenz">Kurzreferenz</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <p class="lede">
+      Der Team &amp; Berechtigungsmanager liest eine CDE-Berechtigungsmatrix aus Excel, gleicht sie
+      mit den Trimble-Gruppen und der Ordnerstruktur eines Projekts ab und wendet Ordnerberechtigungen
+      erst nach einer geprüften Vorschau (Dry-Run) an.
+    </p>
+
+    <section id="ueberblick">
+      <h2>Überblick</h2>
+      <p>Die Extension deckt den gesamten Ablauf von der Matrix bis zur angewendeten Berechtigung ab:</p>
+      <div class="card-grid">
+        <div class="card">
+          <h4>Teams abgleichen</h4>
+          <p>Team-Namen aus der Matrix mit bestehenden Trimble-Gruppen vergleichen und fehlende automatisch anlegen.</p>
+        </div>
+        <div class="card">
+          <h4>Ordner scannen</h4>
+          <p>Die komplette Projekt-Ordnerstruktur inklusive aller Unterordner erfassen.</p>
+        </div>
+        <div class="card">
+          <h4>Dry-Run</h4>
+          <p>Vorschau je Ordner und Team, bevor irgendetwas verändert wird.</p>
+        </div>
+        <div class="card">
+          <h4>Anwenden</h4>
+          <p>Berechtigungen erst nach expliziter Bestätigung wirklich schreiben.</p>
+        </div>
+        <div class="card">
+          <h4>Aufräumen</h4>
+          <p>Ungenutzte Gruppen erkennen und kontrolliert löschen.</p>
+        </div>
+        <div class="card">
+          <h4>Vorlage</h4>
+          <p>Leere Beispielmatrix mit Anleitung als Excel-Datei exportieren.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="voraussetzungen">
+      <h2>Voraussetzungen</h2>
+      <ul>
+        <li><strong>Projekt-Administratorrechte</strong> in Trimble Connect – zum Registrieren der Extension sowie zum Anlegen/Löschen von Gruppen und Ändern von Ordnerberechtigungen.</li>
+        <li><strong>Aktueller Browser</strong>, Chrome wird von Trimble für Custom Extensions empfohlen.</li>
+        <li><strong>CDE-Berechtigungsmatrix</strong> als Excel-Datei (<code>.xlsx</code>/<code>.xls</code>) im in Abschnitt&nbsp;4 beschriebenen Format – oder die Vorlage direkt aus der Extension exportieren.</li>
+        <li><strong>Passende API-Region</strong>: für Schweizer/europäische Projekte <code>EU</code>. Die Extension schlägt die Region anhand des Projektstandorts vor, sie lässt sich oben rechts jederzeit manuell umstellen.</li>
+      </ul>
+    </section>
+
+    <section id="einrichtung">
+      <h2>Einrichtung (einmalig pro Projekt)</h2>
+      <ol class="steps">
+        <li>
+          <strong>Extensions-Einstellungen öffnen</strong>
+          Im Projekt zu <strong>Einstellungen → Extensions</strong> wechseln.
+        </li>
+        <li>
+          <strong>Manifest-URL eintragen</strong>
+          <div class="url-box">
+            <span class="mono">https://trimble-connect-extension-bpc.vercel.app/manifest.json</span>
+          </div>
+          Unter „Custom Extensions“ einfügen und mit <strong>Add</strong> bestätigen.
+        </li>
+        <li>
+          <strong>Fertig</strong>
+          „Team &amp; Berechtigungsmanager“ erscheint danach im linken Navigationsmenü des Projekts.
+        </li>
+      </ol>
+      <div class="callout warn">
+        <span class="icon warn-icon">!</span>
+        <p>
+          Unbedingt unter <strong>Projekt → Einstellungen → Extensions</strong> registrieren, <strong>nicht</strong>
+          unter den 3D-Viewer-Einstellungen. Im 3D-Viewer registriert erscheint die Extension nur als
+          Viewer-Tab statt als vollwertiges Projekt-Werkzeug im linken Menü.
+        </p>
+      </div>
+    </section>
+
+    <section id="matrix">
+      <h2>Die Excel-Berechtigungsmatrix</h2>
+      <p>Aufbau der Datei:</p>
+      <ul>
+        <li>Jedes <strong>Tabellenblatt entspricht einer Phase</strong>; der Blattname bildet das oberste Pfadsegment.</li>
+        <li><strong>Spalte A</strong> enthält den Ordnernamen. Die <strong>Einrückung mit 2&nbsp;Leerzeichen pro Ebene</strong> bildet die Ordner-Verschachtelung ab.</li>
+        <li>Die <strong>Kopfzeile</strong> listet ab Spalte B ein Team pro Spalte (Zelle A1 ist frei wählbar).</li>
+        <li>Jede Zelle unter einem Team-Namen erhält einen der drei Berechtigungswerte.</li>
+      </ul>
+
+      <div class="table-scroll">
+        <table>
+          <caption>Erlaubte Zellwerte (Gross-/Kleinschreibung spielt keine Rolle)</caption>
+          <thead>
+            <tr><th>Bedeutung</th><th>Kurzform</th><th>Ausgeschrieben</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="pill full">Vollzugriff</span></td><td><code>V</code></td><td><code>Vollzugriff</code></td></tr>
+            <tr><td><span class="pill read">Lesezugriff</span></td><td><code>L</code></td><td><code>Lesezugriff</code></td></tr>
+            <tr><td><span class="pill none">Kein Zugriff</span></td><td><code>K</code></td><td><code>Kein Zugriff</code> oder leere Zelle</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Beispiel einer Einrückung</h3>
+      <div class="indent-demo">
+<span class="l0">Hauptordner                 V   L   K</span>
+<span class="l1">  Unterordner 1             V   L   K</span>
+<span class="l1">  Unterordner 2             L   L   K</span>
+<span class="l2">    Unter-Unterordner       K   V   L</span>
+      </div>
+
+      <div class="callout">
+        <span class="icon info-icon">i</span>
+        <p>
+          Über den Button <strong>„Vorlage exportieren“</strong> rechts neben den Reitern lässt sich jederzeit
+          eine Beispieldatei mit Anleitungsblatt herunterladen – als Startpunkt für eine eigene Matrix.
+        </p>
+      </div>
+    </section>
+
+    <section id="oberflaeche">
+      <h2>Oberfläche im Überblick</h2>
+      <ul>
+        <li><strong>Kopfbereich</strong> – Projektname, Region-Auswahl, Verbindungs- und Token-Status.</li>
+        <li><strong>Reiter „Teams“</strong> – Matrix laden, Trimble-Gruppen laden/erstellen, ungenutzte Gruppen verwalten.</li>
+        <li><strong>Reiter „Berechtigungen“</strong> – Phase wählen, Ordner scannen, Dry-Run erstellen, Berechtigungen anwenden.</li>
+        <li><strong>Reiter „Protokoll“</strong> – vollständiger Verlauf aller Aktionen, Erfolge, Warnungen und Fehler.</li>
+        <li><strong>„Vorlage exportieren“</strong> – Excel-Vorlage herunterladen, unabhängig vom aktuell geladenen Stand.</li>
+      </ul>
+    </section>
+
+    <section id="ablauf">
+      <h2>Ablauf Schritt für Schritt</h2>
+
+      <h3>Einmal pro Sitzung</h3>
+      <ol class="steps">
+        <li><strong>Excel-Matrix laden</strong> im Teams- oder Berechtigungen-Tab – beide laden dieselbe Datei.</li>
+        <li><strong>Gruppen laden</strong> – bestehende Trimble-Gruppen des Projekts abrufen.</li>
+        <li><strong>Fehlende Teams erstellen</strong> im Teams-Tab, falls die Matrix Teams enthält, die als Gruppe noch nicht existieren.</li>
+        <li><strong>Ordner scannen</strong> – durchsucht die komplette Projektstruktur inklusive aller Unterordner. Bei grossen Projekten dauert das etwas; die Fortschrittsanzeige zeigt laufend die bereits gefundene Anzahl.</li>
+      </ol>
+      <p>Gruppen und Ordner müssen <strong>nicht für jede Phase neu geladen</strong> werden – beide Ergebnisse gelten für alle Tabellenblätter und werden beim Dry-Run automatisch wiederverwendet, solange die Seite nicht neu geladen wird.</p>
+
+      <h3>Pro Phase (Tabellenblatt)</h3>
+      <ol class="steps">
+        <li><strong>Tabellenblatt wählen</strong> im Dropdown „Phase“.</li>
+        <li><strong>Dry-Run</strong> klicken – erstellt die Vorschau für die gewählte Phase.</li>
+        <li><strong>Ergebnis prüfen</strong>: jede Zeile zeigt einen Status – <span class="pill full">Bereit</span>, <span class="pill read">Ordner fehlt</span> oder <span class="pill read">Gruppe fehlt</span>.</li>
+        <li><strong>Checkbox aktivieren</strong> – „Änderungen wirklich anwenden“.</li>
+        <li><strong>Berechtigungen anwenden</strong> klicken.</li>
+        <li><strong>Protokoll kontrollieren</strong> – bestätigt, wie viele Ordner aktualisiert wurden bzw. welche Zeilen übersprungen wurden.</li>
+      </ol>
+      <p>Für die nächste Phase genügen die ersten drei Schritte erneut – Gruppen und Ordner sind bereits geladen.</p>
+    </section>
+
+    <section id="gruppen">
+      <h2>Ungenutzte Gruppen (Teams-Tab)</h2>
+      <p>
+        Zeigt alle Trimble-Gruppen, deren Name in <strong>keiner Phase</strong> der aktuell geladenen Matrix mehr
+        vorkommt – hilfreich, um veraltete Teams aufzuräumen.
+      </p>
+      <div class="callout danger">
+        <span class="icon danger-icon">!</span>
+        <p>
+          Löschen wirkt <strong>global im gesamten Trimble-Connect-Projekt</strong> – auch wenn eine Gruppe
+          ausserhalb dieser Matrix noch irgendwo Ordnerberechtigungen hält. Die Liste vor dem Löschen genau
+          prüfen; die Aktion ist erst nach Setzen der Bestätigungs-Checkbox möglich.
+        </p>
+      </div>
+    </section>
+
+    <section id="grenzen">
+      <h2>Grenzen &amp; wichtige Hinweise</h2>
+      <div class="callout warn">
+        <span class="icon warn-icon">!</span>
+        <p><strong>100-Gruppen-Limit pro Berechtigungsstufe:</strong> Die Trimble-API erlaubt maximal 100 Gruppen
+        bei Vollzugriff bzw. bei Lesezugriff pro Ordner. Betroffene Zeilen werden automatisch übersprungen und im
+        Protokoll markiert – sie müssen manuell in mehreren Schritten direkt in Trimble Connect gepflegt werden.</p>
+      </div>
+      <div class="callout">
+        <span class="icon info-icon">i</span>
+        <p><strong>Lokale Speicherung:</strong> Die zuletzt geladene Matrix wird pro Projekt im Browser gespeichert
+        und nach einem Hardreload automatisch wiederhergestellt. Sie liegt <strong>nicht</strong> in der
+        Cloud – bei Browserwechsel, einem anderen Gerät oder gelöschten Browserdaten muss die Datei erneut
+        hochgeladen werden.</p>
+      </div>
+      <div class="callout warn">
+        <span class="icon warn-icon">!</span>
+        <p><strong>Region muss zum Projektstandort passen:</strong> Stimmt die gewählte Region nicht mit der
+        tatsächlichen Trimble-Connect-Region des Projekts überein, schlagen alle API-Aufrufe fehl.</p>
+      </div>
+    </section>
+
+    <section id="referenz">
+      <h2>Kurzreferenz</h2>
+      <div class="table-scroll">
+        <table>
+          <caption>API-Regionen</caption>
+          <thead>
+            <tr><th>Region</th><th>Basis-URL</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>EU (Schweiz/Europa)</td><td><code>app21.connect.trimble.com</code></td></tr>
+            <tr><td>US</td><td><code>app.connect.trimble.com</code></td></tr>
+            <tr><td>UK</td><td><code>app22.connect.trimble.com</code></td></tr>
+            <tr><td>AP</td><td><code>app31.connect.trimble.com</code></td></tr>
+            <tr><td>AP2</td><td><code>app32.connect.trimble.com</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <caption>Manifest-URL zur Registrierung</caption>
+          <tbody>
+            <tr><td><code>https://trimble-connect-extension-bpc.vercel.app/manifest.json</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Team &amp; Berechtigungsmanager – BuildingPoint Schweiz AG – interne Anleitung für Projekt-Administratoren.
+  </footer>
+</div>
+</body>
+</html>
