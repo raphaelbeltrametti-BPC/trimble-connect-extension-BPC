@@ -19,7 +19,7 @@ import { normalizeLookup } from "./utils/text";
 import { loadStoredWorkbook, saveStoredWorkbook } from "./utils/workbookStorage";
 import "./index.css";
 
-type TabId = "teams" | "permissions" | "log";
+type TabId = "teams" | "folders" | "permissions" | "log";
 
 export default function App() {
   const { connected, connectionError, accessToken, project, hostName, refreshAccessToken } = useApi();
@@ -619,6 +619,7 @@ export default function App() {
 
       <nav className="tabs" aria-label="Hauptbereiche">
         <button className={activeTab === "teams" ? "active" : ""} onClick={() => setActiveTab("teams")}>Teams</button>
+        <button className={activeTab === "folders" ? "active" : ""} onClick={() => setActiveTab("folders")}>Ordner erstellen</button>
         <button className={activeTab === "permissions" ? "active" : ""} onClick={() => setActiveTab("permissions")}>Berechtigungen</button>
         <button className={activeTab === "log" ? "active" : ""} onClick={() => setActiveTab("log")}>Protokoll</button>
         <button
@@ -653,6 +654,32 @@ export default function App() {
           />
         )}
 
+        {activeTab === "folders" && (
+          <FoldersTab
+            busy={isBusy}
+            workbook={workbook}
+            selectedSheet={selectedSheet}
+            setSelectedSheet={setSelectedSheet}
+            currentMatrix={currentMatrix}
+            folders={folders}
+            projectDetails={projectDetails}
+            progress={progress}
+            onWorkbook={handleWorkbook}
+            onScanFolders={scanFolders}
+            targetParentFilter={targetParentFilter}
+            setTargetParentFilter={setTargetParentFilter}
+            targetParentCandidates={targetParentCandidates}
+            targetParentId={targetParentId}
+            setTargetParentId={setTargetParentId}
+            targetParentLabel={targetParentLabel}
+            folderPlan={folderPlan}
+            allowCreateFolders={allowCreateFolders}
+            setAllowCreateFolders={setAllowCreateFolders}
+            onPlanFolders={planMissingFolders}
+            onCreateFolders={createMissingFolders}
+          />
+        )}
+
         {activeTab === "permissions" && (
           <PermissionsTab
             busy={isBusy}
@@ -673,17 +700,6 @@ export default function App() {
             onScanFolders={scanFolders}
             onDryRun={createDryRun}
             onApply={applyPermissions}
-            targetParentFilter={targetParentFilter}
-            setTargetParentFilter={setTargetParentFilter}
-            targetParentCandidates={targetParentCandidates}
-            targetParentId={targetParentId}
-            setTargetParentId={setTargetParentId}
-            targetParentLabel={targetParentLabel}
-            folderPlan={folderPlan}
-            allowCreateFolders={allowCreateFolders}
-            setAllowCreateFolders={setAllowCreateFolders}
-            onPlanFolders={planMissingFolders}
-            onCreateFolders={createMissingFolders}
           />
         )}
 
@@ -816,6 +832,144 @@ function TeamsTab(props: TeamsTabProps) {
   );
 }
 
+interface FoldersTabProps {
+  busy: boolean;
+  workbook: WorkbookModel | null;
+  selectedSheet: string;
+  setSelectedSheet: (sheet: string) => void;
+  currentMatrix: PermissionMatrix | null;
+  folders: TCFolder[];
+  projectDetails: TCProject | null;
+  progress: ProgressState;
+  onWorkbook: (file: File) => void;
+  onScanFolders: () => void;
+  targetParentFilter: string;
+  setTargetParentFilter: (value: string) => void;
+  targetParentCandidates: TCFolder[];
+  targetParentId: string;
+  setTargetParentId: (value: string) => void;
+  targetParentLabel: string;
+  folderPlan: FolderCreationStep[];
+  allowCreateFolders: boolean;
+  setAllowCreateFolders: (value: boolean) => void;
+  onPlanFolders: () => void;
+  onCreateFolders: () => void;
+}
+
+function FoldersTab(props: FoldersTabProps) {
+  const toCreate = props.folderPlan.filter((step) => step.status === "create").length;
+
+  return (
+    <div className="panel-grid wide">
+      <section className="panel">
+        <h2>Phase</h2>
+        <FileInput disabled={props.busy} onFile={props.onWorkbook} />
+        <label className="field">
+          <span>Tabellenblatt</span>
+          <select value={props.selectedSheet} onChange={(event) => props.setSelectedSheet(event.target.value)}>
+            {props.workbook?.sheetNames.map((sheet) => <option key={sheet} value={sheet}>{sheet}</option>)}
+          </select>
+        </label>
+        <MetricGrid
+          metrics={[
+            ["Ordner in Matrix", props.currentMatrix?.stats.folders ?? 0],
+            ["Gescannt", props.folders.length],
+          ]}
+        />
+        <div className="inline-actions">
+          <button onClick={props.onScanFolders} disabled={props.busy}>Ordner scannen</button>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Zielordner</h2>
+        <p className="hint">
+          Wohin der Phasenordner (Blattname <strong>{props.currentMatrix?.sheetName ?? "–"}</strong>) kommt,
+          falls er noch fehlt.
+        </p>
+        <label className="field">
+          <span>Ordner suchen</span>
+          <input
+            value={props.targetParentFilter}
+            onChange={(event) => props.setTargetParentFilter(event.target.value)}
+            placeholder="Suche (leer = Projekt-Root)"
+          />
+        </label>
+        {props.targetParentCandidates.length > 0 && (
+          <div className="table-wrap" style={{ maxHeight: 160 }}>
+            <table>
+              <tbody>
+                {props.targetParentCandidates.map((folder) => (
+                  <tr
+                    key={folder.id}
+                    className={`selectable${folder.id === props.targetParentId ? " selected" : ""}`}
+                    onClick={() => props.setTargetParentId(folder.id)}
+                  >
+                    <td>{folder.path}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="hint">Aktueller Zielordner: <strong>{props.targetParentLabel || "unbekannt (zuerst Ordner scannen)"}</strong></p>
+      </section>
+
+      <section className="panel span-2">
+        <div className="panel-title-row">
+          <h2>Ordner-Plan</h2>
+          <div className="summary-pills">
+            <span className="pill warn">{toCreate} werden erstellt</span>
+            <span className="pill ok">{props.folderPlan.length - toCreate} vorhanden</span>
+          </div>
+        </div>
+        <div className="inline-actions">
+          <button className="primary" onClick={props.onPlanFolders} disabled={props.busy || !props.currentMatrix}>
+            Ordner-Plan erstellen
+          </button>
+        </div>
+        <div className="apply-row">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={props.allowCreateFolders}
+              onChange={(event) => props.setAllowCreateFolders(event.target.checked)}
+            />
+            <span>Ordner wirklich erstellen</span>
+          </label>
+          <button
+            className="danger"
+            onClick={props.onCreateFolders}
+            disabled={props.busy || !props.allowCreateFolders || toCreate === 0}
+          >
+            Ordner erstellen
+          </button>
+        </div>
+        <div className="table-wrap plan-table">
+          <table>
+            <thead>
+              <tr><th>Status</th><th>Pfad</th></tr>
+            </thead>
+            <tbody>
+              {props.folderPlan.map((step) => (
+                <tr key={`${step.rowNumber}-${step.path}`}>
+                  <td><span className={`state ${step.status === "create" ? "missing-folder" : "ready"}`}>{step.status === "create" ? "Wird erstellt" : "Vorhanden"}</span></td>
+                  <td>{step.path}</td>
+                </tr>
+              ))}
+              {props.folderPlan.length === 0 && (
+                <tr>
+                  <td colSpan={2} className="empty-cell">Noch kein Ordner-Plan</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 interface PermissionsTabProps {
   busy: boolean;
   workbook: WorkbookModel | null;
@@ -835,17 +989,6 @@ interface PermissionsTabProps {
   onScanFolders: () => void;
   onDryRun: () => void;
   onApply: () => void;
-  targetParentFilter: string;
-  setTargetParentFilter: (value: string) => void;
-  targetParentCandidates: TCFolder[];
-  targetParentId: string;
-  setTargetParentId: (value: string) => void;
-  targetParentLabel: string;
-  folderPlan: FolderCreationStep[];
-  allowCreateFolders: boolean;
-  setAllowCreateFolders: (value: boolean) => void;
-  onPlanFolders: () => void;
-  onCreateFolders: () => void;
 }
 
 function PermissionsTab(props: PermissionsTabProps) {
@@ -885,79 +1028,6 @@ function PermissionsTab(props: PermissionsTabProps) {
           <button onClick={props.onScanFolders} disabled={props.busy}>Ordner scannen</button>
           <button className="primary" onClick={props.onDryRun} disabled={props.busy || !props.currentMatrix}>Dry-Run</button>
         </div>
-      </section>
-
-      <section className="panel span-2">
-        <h2>Fehlende Ordner erstellen</h2>
-        <p className="hint">
-          Legt den Phasenordner (Blattname <strong>{props.currentMatrix?.sheetName ?? "–"}</strong>) und alle
-          fehlenden Unterordner gemaess Matrix unter dem Zielordner an.
-        </p>
-        <label className="field">
-          <span>Zielordner fuer den Phasenordner</span>
-          <input
-            value={props.targetParentFilter}
-            onChange={(event) => props.setTargetParentFilter(event.target.value)}
-            placeholder="Ordner suchen (leer = Projekt-Root)"
-          />
-        </label>
-        {props.targetParentCandidates.length > 0 && (
-          <div className="table-wrap" style={{ maxHeight: 160 }}>
-            <table>
-              <tbody>
-                {props.targetParentCandidates.map((folder) => (
-                  <tr
-                    key={folder.id}
-                    className={`selectable${folder.id === props.targetParentId ? " selected" : ""}`}
-                    onClick={() => props.setTargetParentId(folder.id)}
-                  >
-                    <td>{folder.path}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="hint">Aktueller Zielordner: <strong>{props.targetParentLabel || "unbekannt (zuerst Ordner scannen)"}</strong></p>
-        <div className="inline-actions">
-          <button onClick={props.onPlanFolders} disabled={props.busy || !props.currentMatrix}>Ordner-Plan erstellen</button>
-        </div>
-        {props.folderPlan.length > 0 && (
-          <>
-            <div className="table-wrap" style={{ maxHeight: 220 }}>
-              <table>
-                <thead>
-                  <tr><th>Status</th><th>Pfad</th></tr>
-                </thead>
-                <tbody>
-                  {props.folderPlan.map((step) => (
-                    <tr key={`${step.rowNumber}-${step.path}`}>
-                      <td><span className={`state ${step.status === "create" ? "missing-folder" : "ready"}`}>{step.status === "create" ? "Wird erstellt" : "Vorhanden"}</span></td>
-                      <td>{step.path}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="apply-row">
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={props.allowCreateFolders}
-                  onChange={(event) => props.setAllowCreateFolders(event.target.checked)}
-                />
-                <span>Ordner wirklich erstellen</span>
-              </label>
-              <button
-                className="danger"
-                onClick={props.onCreateFolders}
-                disabled={props.busy || !props.allowCreateFolders || props.folderPlan.every((step) => step.status !== "create")}
-              >
-                Ordner erstellen
-              </button>
-            </div>
-          </>
-        )}
       </section>
 
       <section className="panel span-2">
