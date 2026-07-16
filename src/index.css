@@ -465,6 +465,20 @@ tbody tr:hover {
   background: #f9fbfd;
 }
 
+tbody tr.selected {
+  background: var(--blue-soft);
+}
+
+tbody tr.selectable {
+  cursor: pointer;
+}
+
+.hint {
+  margin: 6px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .empty-cell {
   color: var(--muted);
   padding: 18px;

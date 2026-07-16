@@ -77,14 +77,32 @@ src/
   hooks/
     useApi.ts         Workspace API Verbindung und Token
   permissions/
-    planner.ts        Dry-Run Planung fuer Folder ACLs
+    planner.ts         Dry-Run Planung fuer Folder ACLs
+    folderPlanner.ts   Plant fehlende Ordner je Phase (Blattname als Wurzel)
   types/
     index.ts          Gemeinsame TypeScript Typen
   utils/
     text.ts           Normalisierung fuer Namen und Pfade
   App.tsx             UI und Workflow
   index.css           Layout und Styling
+public/
+  hilfe.html           Selbst gehostete Anleitung (verlinkt vom "?"-Button)
 ```
+
+## Fehlende Ordner automatisch erstellen
+
+- Neue API-Methode `TrimbleClient.createFolder(parentId, name)` ruft
+  `POST /folders` mit `{ name, parentId }` auf.
+- `folderPlanner.buildFolderCreationPlan()` ist rein clientseitig (kein API-
+  Aufruf): der Excel-Blattname wird als Phasenordner unter dem gewaehlten
+  Zielordner behandelt, jede Matrixzeile nested darunter entsprechend ihrer
+  Einrueckung — Eltern werden dabei immer vor Kindern verarbeitet, weil die
+  Matrix (wie beim Parser) top-down in Dateireihenfolge gelesen wird.
+- Der Zielordner (wohin der Phasenordner kommt, falls er fehlt) ist frei
+  waehlbar (Suche ueber bereits gescannte Ordner) und faellt sonst auf die
+  Projekt-Root zurueck.
+- Erstellen laeuft wie das Anwenden der Berechtigungen erst nach Dry-Run-
+  artiger Vorschau und expliziter Bestaetigungs-Checkbox.
 
 ## Naechster fachlicher Test
 

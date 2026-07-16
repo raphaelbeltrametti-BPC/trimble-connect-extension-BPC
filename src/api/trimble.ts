@@ -98,6 +98,22 @@ export class TrimbleClient {
     await this.request(`/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
   }
 
+  async createFolder(parentId: string, name: string): Promise<TCFolder> {
+    const folder = await this.request<any>("/folders", {
+      method: "POST",
+      body: JSON.stringify({ name, parentId }),
+    });
+
+    return {
+      id: String(folder.id ?? ""),
+      name: String(folder.name ?? name),
+      type: String(folder.type ?? "FOLDER"),
+      parentId: folder.parentId ?? parentId,
+      path: "",
+      depth: 0,
+    };
+  }
+
   /**
    * Performs one raw request and returns status/body verbatim (even on non-2xx), so the caller
    * can surface exactly what the Trimble API sent back (e.g. in the UI log) without needing

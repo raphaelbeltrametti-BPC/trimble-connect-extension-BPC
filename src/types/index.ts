@@ -62,6 +62,15 @@ export interface FolderAcl {
   NO_ACCESS: string[];
 }
 
+export interface FolderCreationStep {
+  rowNumber: number;
+  depth: number;
+  name: string;
+  path: string;
+  status: "existing" | "create";
+  folderId?: string;
+}
+
 export interface PermissionPlanItem {
   rowNumber: number;
   folderPath: string;

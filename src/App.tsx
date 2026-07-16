@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URLS, TrimbleApiError, TrimbleClient } from "./api/trimble";
 import { useApi } from "./hooks/useApi";
 import { buildPermissionPlan } from "./permissions/planner";
+import { buildFolderCreationPlan } from "./permissions/folderPlanner";
 import type {
   ApiRegion,
+  FolderCreationStep,
   LogEntry,
   PermissionMatrix,
   PermissionPlanItem,
@@ -39,6 +41,10 @@ export default function App() {
   const [progress, setProgress] = useState<ProgressState>({ current: 0, total: 0, label: "" });
   const [allowApply, setAllowApply] = useState(false);
   const [allowDeleteGroups, setAllowDeleteGroups] = useState(false);
+  const [targetParentId, setTargetParentId] = useState("");
+  const [targetParentFilter, setTargetParentFilter] = useState("");
+  const [folderPlan, setFolderPlan] = useState<FolderCreationStep[]>([]);
+  const [allowCreateFolders, setAllowCreateFolders] = useState(false);
 
   useEffect(() => {
     if (regionTouched || !project?.location) return;
@@ -99,6 +105,24 @@ export default function App() {
     () => workbook?.matrices.find((matrix) => matrix.sheetName === selectedSheet) ?? null,
     [selectedSheet, workbook]
   );
+
+  const effectiveTargetParentId = targetParentId || projectDetails?.rootId || "";
+
+  const targetParentCandidates = useMemo(() => {
+    const query = normalizeLookup(targetParentFilter);
+    if (!query) return [];
+    return folders
+      .filter((folder) => normalizeLookup(folder.name).includes(query) || normalizeLookup(folder.path).includes(query))
+      .slice(0, 50);
+  }, [folders, targetParentFilter]);
+
+  const targetParentLabel = useMemo(() => {
+    if (targetParentId) {
+      const match = folders.find((folder) => folder.id === targetParentId);
+      return match ? match.path : targetParentId;
+    }
+    return projectDetails?.rootId ? "Projekt-Root (Standard)" : "";
+  }, [folders, projectDetails?.rootId, targetParentId]);
 
   const missingTeamNames = useMemo(() => {
     if (!workbook) return [];
@@ -313,6 +337,87 @@ export default function App() {
     }
   }
 
+  function planMissingFolders() {
+    if (!currentMatrix) {
+      addLog("warning", "Bitte zuerst eine Phase aus der Matrix waehlen.");
+      return;
+    }
+    if (!effectiveTargetParentId) {
+      addLog("warning", "Kein Zielordner bekannt. Bitte zuerst Ordner scannen oder manuell waehlen.");
+      return;
+    }
+
+    const nextPlan = buildFolderCreationPlan(currentMatrix, folders, effectiveTargetParentId);
+    setFolderPlan(nextPlan);
+
+    const toCreate = nextPlan.filter((step) => step.status === "create").length;
+    addLog("info", `Ordner-Plan erstellt: ${toCreate} von ${nextPlan.length} Ordnern fehlen unter "${targetParentLabel}".`);
+  }
+
+  async function createMissingFolders() {
+    if (!allowCreateFolders) {
+      addLog("warning", "Erstellen blockiert: Checkbox fuer Ordner-Erstellung ist nicht gesetzt.");
+      return;
+    }
+    if (!currentMatrix || folderPlan.length === 0) {
+      addLog("warning", "Bitte zuerst einen Ordner-Plan erstellen.");
+      return;
+    }
+    if (!effectiveTargetParentId) return;
+
+    setBusy("create-folders");
+    const toCreate = folderPlan.filter((step) => step.status === "create").length;
+    setProgress({ current: 0, total: toCreate, label: "Ordner erstellen" });
+
+    const resolvedIdByDepth = new Map<number, string>();
+    let created = 0;
+    let failed = 0;
+    let progressDone = 0;
+    const newFolders: TCFolder[] = [];
+
+    for (const step of folderPlan) {
+      const parentId = step.depth === 0 ? effectiveTargetParentId : resolvedIdByDepth.get(step.depth - 1);
+
+      if (!parentId) {
+        addLog("error", `Uebersprungen: ${step.path} (uebergeordneter Ordner wurde nicht erstellt).`);
+        failed += 1;
+        continue;
+      }
+
+      if (step.status === "existing" && step.folderId) {
+        resolvedIdByDepth.set(step.depth, step.folderId);
+        continue;
+      }
+
+      try {
+        const folder = await client.createFolder(parentId, step.name);
+        const parentPath = newFolders.find((f) => f.id === parentId)?.path
+          ?? folders.find((f) => f.id === parentId)?.path
+          ?? "";
+        const withPath: TCFolder = { ...folder, path: parentPath ? `${parentPath}/${folder.name}` : folder.name, depth: step.depth };
+        newFolders.push(withPath);
+        resolvedIdByDepth.set(step.depth, folder.id);
+        created += 1;
+        addLog("success", `Ordner erstellt: ${step.path}.`);
+      } catch (error) {
+        failed += 1;
+        addLog("error", `Ordner konnte nicht erstellt werden: ${step.path}.`, formatError(error));
+      }
+
+      progressDone += 1;
+      setProgress({ current: progressDone, total: toCreate, label: "Ordner erstellen" });
+    }
+
+    if (newFolders.length > 0) {
+      setFolders((current) => [...current, ...newFolders]);
+    }
+
+    setAllowCreateFolders(false);
+    setBusy("");
+    setProgress({ current: 0, total: 0, label: "" });
+    addLog("info", `Ordner-Erstellung fertig. Erstellt: ${created}, Fehler: ${failed}.`);
+  }
+
   async function createDryRun() {
     if (!currentMatrix) {
       addLog("warning", "Bitte zuerst eine Phase aus der Matrix waehlen.");
@@ -506,6 +611,17 @@ export default function App() {
             onScanFolders={scanFolders}
             onDryRun={createDryRun}
             onApply={applyPermissions}
+            targetParentFilter={targetParentFilter}
+            setTargetParentFilter={setTargetParentFilter}
+            targetParentCandidates={targetParentCandidates}
+            targetParentId={targetParentId}
+            setTargetParentId={setTargetParentId}
+            targetParentLabel={targetParentLabel}
+            folderPlan={folderPlan}
+            allowCreateFolders={allowCreateFolders}
+            setAllowCreateFolders={setAllowCreateFolders}
+            onPlanFolders={planMissingFolders}
+            onCreateFolders={createMissingFolders}
           />
         )}
 
@@ -657,6 +773,17 @@ interface PermissionsTabProps {
   onScanFolders: () => void;
   onDryRun: () => void;
   onApply: () => void;
+  targetParentFilter: string;
+  setTargetParentFilter: (value: string) => void;
+  targetParentCandidates: TCFolder[];
+  targetParentId: string;
+  setTargetParentId: (value: string) => void;
+  targetParentLabel: string;
+  folderPlan: FolderCreationStep[];
+  allowCreateFolders: boolean;
+  setAllowCreateFolders: (value: boolean) => void;
+  onPlanFolders: () => void;
+  onCreateFolders: () => void;
 }
 
 function PermissionsTab(props: PermissionsTabProps) {
@@ -696,6 +823,79 @@ function PermissionsTab(props: PermissionsTabProps) {
           <button onClick={props.onScanFolders} disabled={props.busy}>Ordner scannen</button>
           <button className="primary" onClick={props.onDryRun} disabled={props.busy || !props.currentMatrix}>Dry-Run</button>
         </div>
+      </section>
+
+      <section className="panel span-2">
+        <h2>Fehlende Ordner erstellen</h2>
+        <p className="hint">
+          Legt den Phasenordner (Blattname <strong>{props.currentMatrix?.sheetName ?? "–"}</strong>) und alle
+          fehlenden Unterordner gemaess Matrix unter dem Zielordner an.
+        </p>
+        <label className="field">
+          <span>Zielordner fuer den Phasenordner</span>
+          <input
+            value={props.targetParentFilter}
+            onChange={(event) => props.setTargetParentFilter(event.target.value)}
+            placeholder="Ordner suchen (leer = Projekt-Root)"
+          />
+        </label>
+        {props.targetParentCandidates.length > 0 && (
+          <div className="table-wrap" style={{ maxHeight: 160 }}>
+            <table>
+              <tbody>
+                {props.targetParentCandidates.map((folder) => (
+                  <tr
+                    key={folder.id}
+                    className={`selectable${folder.id === props.targetParentId ? " selected" : ""}`}
+                    onClick={() => props.setTargetParentId(folder.id)}
+                  >
+                    <td>{folder.path}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="hint">Aktueller Zielordner: <strong>{props.targetParentLabel || "unbekannt (zuerst Ordner scannen)"}</strong></p>
+        <div className="inline-actions">
+          <button onClick={props.onPlanFolders} disabled={props.busy || !props.currentMatrix}>Ordner-Plan erstellen</button>
+        </div>
+        {props.folderPlan.length > 0 && (
+          <>
+            <div className="table-wrap" style={{ maxHeight: 220 }}>
+              <table>
+                <thead>
+                  <tr><th>Status</th><th>Pfad</th></tr>
+                </thead>
+                <tbody>
+                  {props.folderPlan.map((step) => (
+                    <tr key={`${step.rowNumber}-${step.path}`}>
+                      <td><span className={`state ${step.status === "create" ? "missing-folder" : "ready"}`}>{step.status === "create" ? "Wird erstellt" : "Vorhanden"}</span></td>
+                      <td>{step.path}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="apply-row">
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={props.allowCreateFolders}
+                  onChange={(event) => props.setAllowCreateFolders(event.target.checked)}
+                />
+                <span>Ordner wirklich erstellen</span>
+              </label>
+              <button
+                className="danger"
+                onClick={props.onCreateFolders}
+                disabled={props.busy || !props.allowCreateFolders || props.folderPlan.every((step) => step.status !== "create")}
+              >
+                Ordner erstellen
+              </button>
+            </div>
+          </>
+        )}
       </section>
 
       <section className="panel span-2">
