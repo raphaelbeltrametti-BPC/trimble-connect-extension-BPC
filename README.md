@@ -14,6 +14,11 @@ Folder-Permissions als Dry-Run vor, bevor sie angewendet werden.
 - Excel-Parser fuer Matrixwerte `V`, `L`, `K`, `Vollzugriff`, `Lesezugriff`, `Kein Zugriff`
 - Dry-Run fuer `FULL_ACCESS`, `READ`, `NO_ACCESS`
 - Anwenden per `PATCH /folders/fs/{folderId}/permissions`
+- Zugriffssperre: nur Nutzer mit Projekt-Rolle `ADMIN` (Feld `role` aus
+  `GET /projects/{id}`) sehen die eigentliche Extension; alle anderen sehen
+  nur einen "Keine Berechtigung"-Bildschirm. Bei Pruef-Fehlern (z.B. falsche
+  Region) wird sicherheitshalber ebenfalls gesperrt, mit sichtbarer
+  Fehlermeldung auf dem Sperrbildschirm.
 
 ## Wichtige Korrekturen zur ersten Voreinstellung
 

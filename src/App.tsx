@@ -101,6 +101,39 @@ export default function App() {
     [accessToken, baseUrl, manualToken, refreshAccessToken]
   );
 
+  const [accessState, setAccessState] = useState<"checking" | "admin" | "denied">("checking");
+  const [accessRole, setAccessRole] = useState("");
+  const [accessError, setAccessError] = useState("");
+
+  useEffect(() => {
+    if (!effectiveProject?.id) {
+      setAccessState("checking");
+      return;
+    }
+
+    let cancelled = false;
+    setAccessState("checking");
+    setAccessError("");
+
+    client
+      .getProject(effectiveProject.id)
+      .then((details) => {
+        if (cancelled) return;
+        setAccessRole(details.role ?? "");
+        setAccessState(details.role === "ADMIN" ? "admin" : "denied");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setAccessRole("");
+        setAccessError(formatError(error));
+        setAccessState("denied");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, effectiveProject?.id]);
+
   const currentMatrix = useMemo(
     () => workbook?.matrices.find((matrix) => matrix.sheetName === selectedSheet) ?? null,
     [selectedSheet, workbook]
@@ -485,6 +518,35 @@ export default function App() {
   }
 
   const isBusy = busy.length > 0;
+
+  if (accessState !== "admin") {
+    return (
+      <div className="app-shell">
+        <header className="topbar">
+          <div>
+            <div className="eyebrow">Trimble Connect Web Extension</div>
+            <h1>Team & Berechtigungsmanager</h1>
+          </div>
+        </header>
+        <div className="access-gate">
+          {accessState === "checking" ? (
+            <p>Berechtigung wird geprueft ...</p>
+          ) : (
+            <>
+              <h2>Keine Berechtigung</h2>
+              <p>Diese Extension steht nur Projekt-Administrator:innen zur Verfuegung.</p>
+              {(accessRole || accessError) && (
+                <p className="access-detail">
+                  {accessRole && `Erkannte Rolle: ${accessRole}`}
+                  {accessError && `Pruefung fehlgeschlagen: ${accessError}`}
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">

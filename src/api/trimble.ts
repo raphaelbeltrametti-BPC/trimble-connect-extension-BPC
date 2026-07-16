@@ -66,6 +66,7 @@ export class TrimbleClient {
       name: String(project.name ?? ""),
       location: project.location,
       rootId: project.rootId,
+      role: typeof project.role === "string" ? project.role.toUpperCase() : undefined,
     };
   }
 
