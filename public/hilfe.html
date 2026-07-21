@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Team &amp; Berechtigungsmanager – Anleitung</title>
-<meta name="description" content="Voraussetzungen, Einrichtung und Schritt-für-Schritt-Anleitung für die Trimble Connect Extension von BuildingPoint Schweiz AG." />
+<meta name="description" content="Voraussetzungen und Schritt-für-Schritt-Anleitung für die Trimble Connect Extension von BuildingPoint Schweiz AG." />
 <link rel="icon" href="/icon.svg" type="image/svg+xml" />
 <style>
   :root {
@@ -263,22 +263,6 @@
     overflow-wrap: anywhere;
   }
 
-  .url-box {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 10px 0;
-    padding: 10px 12px;
-    border: 1px solid var(--line-strong);
-    border-radius: var(--radius);
-    background: var(--paper);
-  }
-
-  .url-box .mono {
-    overflow-wrap: anywhere;
-    color: var(--accent-dark);
-  }
-
   .callout {
     display: flex;
     gap: 10px;
@@ -455,10 +439,10 @@
     <ol>
       <li><a href="#ueberblick">Überblick</a></li>
       <li><a href="#voraussetzungen">Voraussetzungen</a></li>
-      <li><a href="#einrichtung">Einrichtung</a></li>
       <li><a href="#matrix">Die Excel-Matrix</a></li>
       <li><a href="#oberflaeche">Oberfläche</a></li>
       <li><a href="#ablauf">Ablauf Schritt für Schritt</a></li>
+      <li><a href="#ordner">Ordner automatisch erstellen</a></li>
       <li><a href="#gruppen">Ungenutzte Gruppen</a></li>
       <li><a href="#grenzen">Grenzen &amp; Hinweise</a></li>
       <li><a href="#referenz">Kurzreferenz</a></li>
@@ -485,6 +469,10 @@
           <p>Die komplette Projekt-Ordnerstruktur inklusive aller Unterordner erfassen.</p>
         </div>
         <div class="card">
+          <h4>Ordner erstellen</h4>
+          <p>Fehlende Ordner gemäss Matrix automatisch anlegen – auch eine komplette Struktur in einem leeren Projekt.</p>
+        </div>
+        <div class="card">
           <h4>Dry-Run</h4>
           <p>Vorschau je Ordner und Team, bevor irgendetwas verändert wird.</p>
         </div>
@@ -506,40 +494,11 @@
     <section id="voraussetzungen">
       <h2>Voraussetzungen</h2>
       <ul>
-        <li><strong>Projekt-Administratorrechte</strong> in Trimble Connect – zum Registrieren der Extension sowie zum Anlegen/Löschen von Gruppen und Ändern von Ordnerberechtigungen.</li>
+        <li><strong>Projekt-Administratorrolle</strong> in Trimble Connect. Die Extension prüft das automatisch – Nutzer:innen ohne Admin-Rolle sehen nur einen "Keine Berechtigung"-Bildschirm.</li>
         <li><strong>Aktueller Browser</strong>, Chrome wird von Trimble für Custom Extensions empfohlen.</li>
-        <li><strong>CDE-Berechtigungsmatrix</strong> als Excel-Datei (<code>.xlsx</code>/<code>.xls</code>) im in Abschnitt&nbsp;4 beschriebenen Format – oder die Vorlage direkt aus der Extension exportieren.</li>
+        <li><strong>CDE-Berechtigungsmatrix</strong> als Excel-Datei (<code>.xlsx</code>/<code>.xls</code>) im in Abschnitt&nbsp;3 beschriebenen Format – oder die Vorlage direkt aus der Extension exportieren.</li>
         <li><strong>Passende API-Region</strong>: für Schweizer/europäische Projekte <code>EU</code>. Die Extension schlägt die Region anhand des Projektstandorts vor, sie lässt sich oben rechts jederzeit manuell umstellen.</li>
       </ul>
-    </section>
-
-    <section id="einrichtung">
-      <h2>Einrichtung (einmalig pro Projekt)</h2>
-      <ol class="steps">
-        <li>
-          <strong>Extensions-Einstellungen öffnen</strong>
-          Im Projekt zu <strong>Einstellungen → Extensions</strong> wechseln.
-        </li>
-        <li>
-          <strong>Manifest-URL eintragen</strong>
-          <div class="url-box">
-            <span class="mono">https://trimble-connect-extension-bpc.vercel.app/manifest.json</span>
-          </div>
-          Unter „Custom Extensions“ einfügen und mit <strong>Add</strong> bestätigen.
-        </li>
-        <li>
-          <strong>Fertig</strong>
-          „Team &amp; Berechtigungsmanager“ erscheint danach im linken Navigationsmenü des Projekts.
-        </li>
-      </ol>
-      <div class="callout warn">
-        <span class="icon warn-icon">!</span>
-        <p>
-          Unbedingt unter <strong>Projekt → Einstellungen → Extensions</strong> registrieren, <strong>nicht</strong>
-          unter den 3D-Viewer-Einstellungen. Im 3D-Viewer registriert erscheint die Extension nur als
-          Viewer-Tab statt als vollwertiges Projekt-Werkzeug im linken Menü.
-        </p>
-      </div>
     </section>
 
     <section id="matrix">
@@ -588,6 +547,7 @@
       <ul>
         <li><strong>Kopfbereich</strong> – Projektname, Region-Auswahl, Verbindungs- und Token-Status.</li>
         <li><strong>Reiter „Teams“</strong> – Matrix laden, Trimble-Gruppen laden/erstellen, ungenutzte Gruppen verwalten.</li>
+        <li><strong>Reiter „Ordner erstellen“</strong> – Zielordner wählen, fehlende Ordner gemäss Matrix anlegen.</li>
         <li><strong>Reiter „Berechtigungen“</strong> – Phase wählen, Ordner scannen, Dry-Run erstellen, Berechtigungen anwenden.</li>
         <li><strong>Reiter „Protokoll“</strong> – vollständiger Verlauf aller Aktionen, Erfolge, Warnungen und Fehler.</li>
         <li><strong>„Vorlage exportieren“</strong> – Excel-Vorlage herunterladen, unabhängig vom aktuell geladenen Stand.</li>
@@ -609,6 +569,11 @@
       <h3>Pro Phase (Tabellenblatt)</h3>
       <ol class="steps">
         <li><strong>Tabellenblatt wählen</strong> im Dropdown „Phase“.</li>
+        <li>
+          <strong>Fehlende Ordner anlegen</strong>
+          Falls die Matrix Ordner enthält, die im Projekt noch nicht existieren: im Reiter „Ordner erstellen“
+          den Ordner-Plan pruefen und anwenden (siehe Abschnitt „Ordner automatisch erstellen“).
+        </li>
         <li><strong>Dry-Run</strong> klicken – erstellt die Vorschau für die gewählte Phase.</li>
         <li><strong>Ergebnis prüfen</strong>: jede Zeile zeigt einen Status – <span class="pill full">Bereit</span>, <span class="pill read">Ordner fehlt</span> oder <span class="pill read">Gruppe fehlt</span>.</li>
         <li><strong>Checkbox aktivieren</strong> – „Änderungen wirklich anwenden“.</li>
@@ -616,6 +581,41 @@
         <li><strong>Protokoll kontrollieren</strong> – bestätigt, wie viele Ordner aktualisiert wurden bzw. welche Zeilen übersprungen wurden.</li>
       </ol>
       <p>Für die nächste Phase genügen die ersten drei Schritte erneut – Gruppen und Ordner sind bereits geladen.</p>
+    </section>
+
+    <section id="ordner">
+      <h2>Ordner automatisch erstellen</h2>
+      <p>
+        Legt fehlende Ordner direkt gemäss Matrix an, bevor Berechtigungen vergeben werden – auch eine
+        <strong>komplette Ordnerstruktur in einem leeren Projekt</strong>, nicht nur die oberste Ebene.
+      </p>
+      <ol class="steps">
+        <li>
+          <strong>Zielordner wählen</strong>
+          Wohin der Phasenordner (der Blattname, z.&nbsp;B. <code>31-VORPROJEKT</code>) kommt, falls er noch
+          fehlt. Suche über bereits gescannte Ordner; ohne Auswahl wird die Projekt-Root verwendet.
+        </li>
+        <li>
+          <strong>„Ordner-Plan erstellen“</strong> klicken
+          Zeigt jede Zeile der Matrix mit Status <span class="pill full">Vorhanden</span> oder
+          <span class="pill read">Wird erstellt</span>.
+        </li>
+        <li>
+          <strong>Plan prüfen, dann Checkbox aktivieren</strong> – „Ordner wirklich erstellen“.
+        </li>
+        <li>
+          <strong>„Ordner erstellen“</strong> klicken
+          Legt die fehlenden Ordner in der richtigen Reihenfolge an (Elternordner vor Unterordnern) und macht
+          sie sofort für den anschliessenden Berechtigungs-Dry-Run verfügbar.
+        </li>
+      </ol>
+      <div class="callout">
+        <span class="icon info-icon">i</span>
+        <p>
+          Läuft pro Tabellenblatt. Bei mehreren Phasen einmal je Blatt durch „Ordner-Plan erstellen“ →
+          „Ordner erstellen“ gehen.
+        </p>
+      </div>
     </section>
 
     <section id="gruppen">
@@ -670,14 +670,6 @@
             <tr><td>UK</td><td><code>app22.connect.trimble.com</code></td></tr>
             <tr><td>AP</td><td><code>app31.connect.trimble.com</code></td></tr>
             <tr><td>AP2</td><td><code>app32.connect.trimble.com</code></td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="table-scroll">
-        <table>
-          <caption>Manifest-URL zur Registrierung</caption>
-          <tbody>
-            <tr><td><code>https://trimble-connect-extension-bpc.vercel.app/manifest.json</code></td></tr>
           </tbody>
         </table>
       </div>
