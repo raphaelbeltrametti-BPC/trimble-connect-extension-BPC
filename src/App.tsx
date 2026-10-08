@@ -21,6 +21,19 @@ import "./index.css";
 
 type TabId = "teams" | "folders" | "permissions" | "log";
 
+const HISTORY_LIMIT = 20;
+
+interface HistorySnapshot {
+  workbook: WorkbookModel | null;
+  selectedSheet: string;
+  groups: TCGroup[];
+  deleteMarks: Record<string, boolean>;
+  folders: TCFolder[];
+  folderPlan: FolderCreationStep[];
+  plan: PermissionPlanItem[];
+  targetParentId: string;
+}
+
 export default function App() {
   const { connected, connectionError, accessToken, project, hostName, refreshAccessToken } = useApi();
   const [activeTab, setActiveTab] = useState<TabId>("teams");
@@ -32,6 +45,7 @@ export default function App() {
   const [workbook, setWorkbook] = useState<WorkbookModel | null>(null);
   const [selectedSheet, setSelectedSheet] = useState("");
   const [groups, setGroups] = useState<TCGroup[]>([]);
+  const [deleteMarks, setDeleteMarks] = useState<Record<string, boolean>>({});
   const [folders, setFolders] = useState<TCFolder[]>([]);
   const [projectDetails, setProjectDetails] = useState<TCProject | null>(null);
   const [newGroupName, setNewGroupName] = useState("");
@@ -40,11 +54,100 @@ export default function App() {
   const [busy, setBusy] = useState("");
   const [progress, setProgress] = useState<ProgressState>({ current: 0, total: 0, label: "" });
   const [allowApply, setAllowApply] = useState(false);
-  const [allowDeleteGroups, setAllowDeleteGroups] = useState(false);
   const [targetParentId, setTargetParentId] = useState("");
   const [targetParentFilter, setTargetParentFilter] = useState("");
   const [folderPlan, setFolderPlan] = useState<FolderCreationStep[]>([]);
   const [allowCreateFolders, setAllowCreateFolders] = useState(false);
+
+  const snapshot: HistorySnapshot = { workbook, selectedSheet, groups, deleteMarks, folders, folderPlan, plan, targetParentId };
+  const lastSnapshotRef = useRef<HistorySnapshot>(snapshot);
+  const pastRef = useRef<HistorySnapshot[]>([]);
+  const futureRef = useRef<HistorySnapshot[]>([]);
+  const skipHistoryRef = useRef(false);
+  const [historySizes, setHistorySizes] = useState({ past: 0, future: 0 });
+
+  // Jede Aenderung (auch eine ganze Operation mit mehreren Teilschritten) wird zu einem Undo-Schritt.
+  useEffect(() => {
+    if (busy) return;
+    const last = lastSnapshotRef.current;
+    const changed = (Object.keys(snapshot) as Array<keyof HistorySnapshot>).some((key) => snapshot[key] !== last[key]);
+    if (!changed) return;
+    if (skipHistoryRef.current) {
+      skipHistoryRef.current = false;
+    } else {
+      pastRef.current = [...pastRef.current, last].slice(-HISTORY_LIMIT);
+      futureRef.current = [];
+      setHistorySizes({ past: pastRef.current.length, future: 0 });
+    }
+    lastSnapshotRef.current = snapshot;
+  });
+
+  function applySnapshot(target: HistorySnapshot) {
+    skipHistoryRef.current = true;
+    setWorkbook(target.workbook);
+    setSelectedSheet(target.selectedSheet);
+    setGroups(target.groups);
+    setDeleteMarks(target.deleteMarks);
+    setFolders(target.folders);
+    setFolderPlan(target.folderPlan);
+    setPlan(target.plan);
+    setTargetParentId(target.targetParentId);
+  }
+
+  function undo() {
+    const previous = pastRef.current[pastRef.current.length - 1];
+    if (!previous || busy) return;
+    pastRef.current = pastRef.current.slice(0, -1);
+    futureRef.current = [...futureRef.current, lastSnapshotRef.current].slice(-HISTORY_LIMIT);
+    setHistorySizes({ past: pastRef.current.length, future: futureRef.current.length });
+    applySnapshot(previous);
+  }
+
+  function redo() {
+    const next = futureRef.current[futureRef.current.length - 1];
+    if (!next || busy) return;
+    futureRef.current = futureRef.current.slice(0, -1);
+    pastRef.current = [...pastRef.current, lastSnapshotRef.current].slice(-HISTORY_LIMIT);
+    setHistorySizes({ past: pastRef.current.length, future: futureRef.current.length });
+    applySnapshot(next);
+  }
+
+  function toggleMark(groupId: string) {
+    setDeleteMarks((current) => ({ ...current, [groupId]: !markedIds.has(groupId) }));
+  }
+
+  function keepAllGroups() {
+    setDeleteMarks(Object.fromEntries(groups.map((group) => [group.id, false])));
+  }
+
+  async function commitMarkedGroups() {
+    const toDelete = groups.filter((group) => markedIds.has(group.id));
+    if (toDelete.length === 0) return;
+    const names = toDelete.map((group) => group.name).join("\n");
+    if (!window.confirm(`${toDelete.length} Team(s) in Trimble Connect endgueltig loeschen?\n\n${names}`)) return;
+
+    setBusy("delete-groups");
+    setProgress({ current: 0, total: toDelete.length, label: "Teams loeschen" });
+
+    const deletedIds = new Set<string>();
+    for (let index = 0; index < toDelete.length; index += 1) {
+      const group = toDelete[index];
+      try {
+        await client.deleteGroup(group.id);
+        deletedIds.add(group.id);
+        addLog("success", `Gruppe geloescht: ${group.name}.`);
+      } catch (error) {
+        addLog("error", `Gruppe konnte nicht geloescht werden: ${group.name}.`, formatError(error));
+      }
+      setProgress({ current: index + 1, total: toDelete.length, label: "Teams loeschen" });
+    }
+
+    setGroups((current) => current.filter((group) => !deletedIds.has(group.id)));
+    setDeleteMarks({});
+    setBusy("");
+    setProgress({ current: 0, total: 0, label: "" });
+    addLog("info", `Team-Loeschung fertig. Geloescht: ${deletedIds.size}, Fehler: ${toDelete.length - deletedIds.size}.`);
+  }
 
   useEffect(() => {
     if (regionTouched || !project?.location) return;
@@ -169,6 +272,14 @@ export default function App() {
     return groups.filter((group) => !wanted.has(normalizeLookup(group.name)));
   }, [groups, workbook]);
 
+  // Teams, die in der Matrix fehlen, sind automatisch zum Loeschen vorgemerkt; per Klick uebersteuerbar.
+  const markedIds = useMemo(() => {
+    const unused = new Set(unusedGroups.map((group) => group.id));
+    return new Set(
+      groups.filter((group) => (deleteMarks[group.id] ?? unused.has(group.id))).map((group) => group.id)
+    );
+  }, [deleteMarks, groups, unusedGroups]);
+
   const planStats = useMemo(() => {
     const ready = plan.filter((item) => item.status === "ready").length;
     const missingFolders = plan.filter((item) => item.status === "missing-folder").length;
@@ -192,6 +303,7 @@ export default function App() {
   async function handleWorkbook(file: File) {
     setBusy("excel");
     setPlan([]);
+    setDeleteMarks({});
     try {
       const { parseWorkbookFile } = await import("./excel/parser");
       const parsed = await parseWorkbookFile(file);
@@ -213,6 +325,7 @@ export default function App() {
     try {
       const loaded = await client.listGroups(tcProject.id);
       setGroups(loaded);
+      setDeleteMarks({});
       addLog("success", `${loaded.length} Trimble-Gruppen geladen.`);
       return loaded;
     } catch (error) {
@@ -284,40 +397,6 @@ export default function App() {
       setBusy("");
       setProgress({ current: 0, total: 0, label: "" });
     }
-  }
-
-  async function deleteUnusedGroups() {
-    if (!allowDeleteGroups) {
-      addLog("warning", "Loeschen blockiert: Checkbox fuer Gruppen-Loeschung ist nicht gesetzt.");
-      return;
-    }
-
-    if (unusedGroups.length === 0) {
-      addLog("warning", "Keine ungenutzten Gruppen zum Loeschen.");
-      return;
-    }
-
-    setBusy("delete-groups");
-    setProgress({ current: 0, total: unusedGroups.length, label: "Gruppen loeschen" });
-
-    let deleted = 0;
-    for (let index = 0; index < unusedGroups.length; index += 1) {
-      const group = unusedGroups[index];
-      try {
-        await client.deleteGroup(group.id);
-        deleted += 1;
-        addLog("success", `Gruppe geloescht: ${group.name}.`);
-      } catch (error) {
-        addLog("error", `Gruppe konnte nicht geloescht werden: ${group.name}.`, formatError(error));
-      }
-      setProgress({ current: index + 1, total: unusedGroups.length, label: "Gruppen loeschen" });
-    }
-
-    setGroups((current) => current.filter((group) => !unusedGroups.some((removed) => removed.id === group.id)));
-    setAllowDeleteGroups(false);
-    setBusy("");
-    setProgress({ current: 0, total: 0, label: "" });
-    addLog("info", `Gruppen-Loeschung fertig. Geloescht: ${deleted}, Fehler: ${unusedGroups.length - deleted}.`);
   }
 
   async function scanFolders() {
@@ -473,6 +552,14 @@ export default function App() {
     }
   }
 
+  function markPlanItem(rowNumber: number, folderPath: string, patch: Partial<PermissionPlanItem>) {
+    setPlan((current) =>
+      current.map((entry) =>
+        entry.rowNumber === rowNumber && entry.folderPath === folderPath ? { ...entry, ...patch } : entry
+      )
+    );
+  }
+
   async function applyPermissions() {
     if (!allowApply) {
       addLog("warning", "Aktivieren blockiert: Checkbox fuer Aenderungen ist nicht gesetzt.");
@@ -494,11 +581,13 @@ export default function App() {
       const oversized = (["READ", "FULL_ACCESS"] as const).filter((level) => item.acl[level].length > 100);
 
       if (oversized.length > 0) {
+        const message = `Mehr als 100 Gruppen bei ${oversized.join(", ")} (API-Limit)`;
         addLog(
           "warning",
           `Uebersprungen: ${item.folderPath} hat mehr als 100 Gruppen bei ${oversized.join(", ")} (API-Limit).`,
           "Diese Zeile muss manuell in mehreren Schritten in Trimble Connect gepflegt werden."
         );
+        markPlanItem(item.rowNumber, item.folderPath, { applyError: message });
         setProgress({ current: index + 1, total: readyItems.length, label: "Berechtigungen anwenden" });
         continue;
       }
@@ -506,8 +595,10 @@ export default function App() {
       try {
         await client.updateFolderPermissions(item.folderId!, item.acl, false);
         applied += 1;
+        markPlanItem(item.rowNumber, item.folderPath, { appliedAt: new Date().toISOString(), applyError: undefined });
       } catch (error) {
         addLog("error", `Berechtigungen fehlgeschlagen: ${item.folderPath}.`, formatError(error));
+        markPlanItem(item.rowNumber, item.folderPath, { applyError: formatError(error) });
       }
       setProgress({ current: index + 1, total: readyItems.length, label: "Berechtigungen anwenden" });
     }
@@ -618,6 +709,22 @@ export default function App() {
         <button className={activeTab === "folders" ? "active" : ""} onClick={() => setActiveTab("folders")}>Ordner erstellen</button>
         <button className={activeTab === "permissions" ? "active" : ""} onClick={() => setActiveTab("permissions")}>Berechtigungen</button>
         <button className={activeTab === "log" ? "active" : ""} onClick={() => setActiveTab("log")}>Protokoll</button>
+        <span className="history-actions">
+          <button
+            onClick={undo}
+            disabled={isBusy || historySizes.past === 0}
+            title={`Letzte Aenderung zurueck (${historySizes.past} moeglich, max. ${HISTORY_LIMIT}). Betrifft nur die Ansicht, nicht bereits in Trimble ausgefuehrte Aenderungen.`}
+          >
+            ↶ Zurück
+          </button>
+          <button
+            onClick={redo}
+            disabled={isBusy || historySizes.future === 0}
+            title={`Aenderung wiederherstellen (${historySizes.future} moeglich)`}
+          >
+            Vorwärts ↷
+          </button>
+        </span>
         <button
           className="tab-action"
           onClick={async () => {
@@ -637,16 +744,16 @@ export default function App() {
             workbook={workbook}
             groups={groups}
             missingTeamNames={missingTeamNames}
-            unusedGroups={unusedGroups}
             newGroupName={newGroupName}
             setNewGroupName={setNewGroupName}
-            allowDeleteGroups={allowDeleteGroups}
-            setAllowDeleteGroups={setAllowDeleteGroups}
             onWorkbook={handleWorkbook}
             onLoadGroups={loadGroups}
             onCreateGroup={createSingleGroup}
             onImportGroups={importMissingGroups}
-            onDeleteUnusedGroups={deleteUnusedGroups}
+            markedIds={markedIds}
+            onToggleMark={toggleMark}
+            onCommitMarked={commitMarkedGroups}
+            onKeepAll={keepAllGroups}
           />
         )}
 
@@ -718,16 +825,16 @@ interface TeamsTabProps {
   workbook: WorkbookModel | null;
   groups: TCGroup[];
   missingTeamNames: string[];
-  unusedGroups: TCGroup[];
   newGroupName: string;
   setNewGroupName: (value: string) => void;
-  allowDeleteGroups: boolean;
-  setAllowDeleteGroups: (value: boolean) => void;
   onWorkbook: (file: File) => void;
   onLoadGroups: () => void;
   onCreateGroup: () => void;
   onImportGroups: () => void;
-  onDeleteUnusedGroups: () => void;
+  markedIds: Set<string>;
+  onToggleMark: (groupId: string) => void;
+  onCommitMarked: () => void;
+  onKeepAll: () => void;
 }
 
 function TeamsTab(props: TeamsTabProps) {
@@ -758,6 +865,17 @@ function TeamsTab(props: TeamsTabProps) {
           <button className="primary" onClick={props.onImportGroups} disabled={props.busy || !props.workbook}>
             Fehlende erstellen
           </button>
+          <button
+            className="danger"
+            onClick={props.onCommitMarked}
+            disabled={props.busy || props.markedIds.size === 0}
+            title="Rot markierte Teams in Trimble Connect loeschen"
+          >
+            Übernehmen ({props.markedIds.size})
+          </button>
+          {props.markedIds.size > 0 && (
+            <button onClick={props.onKeepAll} disabled={props.busy}>Alle behalten</button>
+          )}
         </div>
         <div className="input-row">
           <input
@@ -773,55 +891,40 @@ function TeamsTab(props: TeamsTabProps) {
               <tr>
                 <th>Name</th>
                 <th>Mitglieder</th>
+                <th aria-label="Entfernen"></th>
               </tr>
             </thead>
             <tbody>
-              {props.groups.map((group) => (
-                <tr key={group.id}>
-                  <td>{group.name}</td>
-                  <td>{group.usersCount ?? "-"}</td>
-                </tr>
-              ))}
+              {props.groups.map((group) => {
+                const marked = props.markedIds.has(group.id);
+                return (
+                  <tr key={group.id} className={marked ? "marked-delete" : undefined}>
+                    <td>
+                      {group.name}
+                      {marked && <span className="delete-note"> (wird gelöscht)</span>}
+                    </td>
+                    <td>{group.usersCount ?? "-"}</td>
+                    <td className="row-remove">
+                      <button
+                        className="icon-button"
+                        onClick={() => props.onToggleMark(group.id)}
+                        disabled={props.busy}
+                        title={marked ? "Loeschung abbrechen" : "Team zum Loeschen vormerken (erst mit Übernehmen wird es in Trimble geloescht)"}
+                        aria-label={marked ? `${group.name} behalten` : `${group.name} entfernen`}
+                      >
+                        {marked ? "↶" : "×"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
               {props.groups.length === 0 && (
                 <tr>
-                  <td colSpan={2} className="empty-cell">Keine Gruppen geladen</td>
+                  <td colSpan={3} className="empty-cell">Keine Gruppen geladen</td>
                 </tr>
               )}
             </tbody>
           </table>
-        </div>
-      </section>
-
-      <section className="panel span-2">
-        <h2>Ungenutzte Gruppen</h2>
-        <p>
-          Gruppen, die in der geladenen Excel-Matrix (ueber alle Phasen) namentlich nicht mehr
-          vorkommen. Loeschen betrifft die Gruppe global in Trimble Connect, auch wenn sie
-          ausserhalb dieser Matrix noch irgendwo Berechtigungen haelt.
-        </p>
-        <MetricGrid metrics={[["Ungenutzt", props.unusedGroups.length]]} />
-        {props.unusedGroups.length > 0 && (
-          <div className="compact-list">
-            {props.unusedGroups.slice(0, 24).map((group) => <span key={group.id}>{group.name}</span>)}
-            {props.unusedGroups.length > 24 && <span>+{props.unusedGroups.length - 24}</span>}
-          </div>
-        )}
-        <div className="apply-row">
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={props.allowDeleteGroups}
-              onChange={(event) => props.setAllowDeleteGroups(event.target.checked)}
-            />
-            <span>Loeschen wirklich durchfuehren</span>
-          </label>
-          <button
-            className="danger"
-            onClick={props.onDeleteUnusedGroups}
-            disabled={props.busy || !props.allowDeleteGroups || props.unusedGroups.length === 0}
-          >
-            Ungenutzte Gruppen loeschen
-          </button>
         </div>
       </section>
     </div>
@@ -1061,16 +1164,23 @@ function PermissionsTab(props: PermissionsTabProps) {
               </tr>
             </thead>
             <tbody>
-              {props.plan.slice(0, 120).map((item) => (
-                <tr key={`${item.rowNumber}-${item.folderPath}`}>
-                  <td><span className={`state ${item.status}`}>{statusLabel(item.status)}</span></td>
-                  <td>{item.folderPath}</td>
-                  <td>{item.counts.fullAccess}</td>
-                  <td>{item.counts.read}</td>
-                  <td>{item.counts.noAccess}</td>
-                  <td>{item.missingGroups.slice(0, 3).join(", ")}{item.missingGroups.length > 3 ? " ..." : ""}</td>
-                </tr>
-              ))}
+              {props.plan.slice(0, 120).map((item) => {
+                const display = planRowDisplay(item);
+                return (
+                  <tr key={`${item.rowNumber}-${item.folderPath}`}>
+                    <td>
+                      <span className={`state ${display.className}`} title={item.applyError}>
+                        {display.label}
+                      </span>
+                    </td>
+                    <td>{item.folderPath}</td>
+                    <td>{item.counts.fullAccess}</td>
+                    <td>{item.counts.read}</td>
+                    <td>{item.counts.noAccess}</td>
+                    <td>{item.missingGroups.slice(0, 3).join(", ")}{item.missingGroups.length > 3 ? " ..." : ""}</td>
+                  </tr>
+                );
+              })}
               {props.plan.length === 0 && (
                 <tr>
                   <td colSpan={6} className="empty-cell">Noch kein Dry-Run</td>
@@ -1170,6 +1280,19 @@ function statusLabel(status: PermissionPlanItem["status"]): string {
   if (status === "ready") return "Bereit";
   if (status === "missing-folder") return "Ordner fehlt";
   return "Gruppe fehlt";
+}
+
+function formatDateTime(iso: string): string {
+  const date = new Date(iso);
+  const datePart = date.toLocaleDateString("de-CH");
+  const timePart = date.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" });
+  return `${datePart} ${timePart}`;
+}
+
+function planRowDisplay(item: PermissionPlanItem): { className: string; label: string } {
+  if (item.appliedAt) return { className: "applied", label: `Erledigt (${formatDateTime(item.appliedAt)})` };
+  if (item.applyError) return { className: "apply-failed", label: "Fehlgeschlagen" };
+  return { className: item.status, label: statusLabel(item.status) };
 }
 
 function guessRegion(location: string): ApiRegion | null {

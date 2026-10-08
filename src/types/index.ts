@@ -84,6 +84,8 @@ export interface PermissionPlanItem {
     read: number;
     noAccess: number;
   };
+  appliedAt?: string;
+  applyError?: string;
 }
 
 export interface LogEntry {

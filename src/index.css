@@ -191,7 +191,8 @@ code {
 
 .status.ok,
 .pill.ok,
-.state.ready {
+.state.ready,
+.state.applied {
   background: var(--green-soft);
   color: var(--green);
 }
@@ -199,7 +200,8 @@ code {
 .status.warn,
 .pill.warn,
 .state.missing-folder,
-.state.missing-groups {
+.state.missing-groups,
+.state.apply-failed {
   background: var(--amber-soft);
   color: var(--amber);
 }
@@ -610,4 +612,56 @@ progress {
   .plan-table {
     max-height: none;
   }
+}
+
+.history-actions {
+  display: inline-flex;
+  margin-left: auto;
+  align-items: stretch;
+}
+
+.tabs .history-actions button {
+  min-width: auto;
+  padding: 0 14px;
+  border-right: 0;
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.tabs .history-actions button:disabled {
+  color: var(--muted);
+  opacity: 0.5;
+}
+
+.history-actions + .tab-action,
+.tabs .history-actions + button.tab-action {
+  margin-left: 0;
+}
+
+.row-remove {
+  width: 32px;
+  text-align: right;
+}
+
+.icon-button {
+  padding: 0 8px;
+  line-height: 1.4;
+  font-size: 16px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.icon-button:hover:not(:disabled) {
+  color: #c62828;
+}
+
+tr.marked-delete td {
+  color: #c62828;
+  background: #fdecea;
+}
+
+.delete-note {
+  font-weight: 600;
 }

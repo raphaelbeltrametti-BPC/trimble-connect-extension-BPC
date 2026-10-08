@@ -47,6 +47,31 @@ export async function parseWorkbookFile(file: File): Promise<WorkbookModel> {
   };
 }
 
+function gcd(a: number, b: number): number {
+  return b === 0 ? a : gcd(b, a % b);
+}
+
+/**
+ * The indentation width isn't fixed at 2 spaces per level in practice - files produced by pasting
+ * from Word/other tools, or by repeated tab expansion, commonly end up with 4, 6 or other widths
+ * per level. Hardcoding "2" then overcounts depth (e.g. 6 spaces / 2 = depth 3 instead of 1),
+ * producing garbled paths with empty segments that never match any real folder. Instead, derive
+ * the sheet's actual per-level width from the greatest common divisor of all observed non-zero
+ * leading-space counts, so a single first-level row (any consistent width) resolves to depth 1.
+ */
+function detectIndentUnit(rows: string[][]): number {
+  let unit = 0;
+  for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+    const rawFolder = String(rows[rowIndex][0] ?? "");
+    if (!normalizeWhitespace(rawFolder)) continue;
+
+    const count = leadingSpaceCount(rawFolder);
+    if (count > 0) unit = gcd(unit, count);
+  }
+
+  return unit || 2;
+}
+
 function parseSheet(sheetName: string, sheet: XLSX.WorkSheet | undefined): PermissionMatrix | null {
   if (!sheet) return null;
 
@@ -63,6 +88,7 @@ function parseSheet(sheetName: string, sheet: XLSX.WorkSheet | undefined): Permi
   const teams = header.slice(1).filter(Boolean);
   if (teams.length === 0) return null;
 
+  const indentUnit = detectIndentUnit(rows);
   const pathStack: string[] = [];
   const matrixRows: MatrixRow[] = [];
   let fullAccess = 0;
@@ -75,12 +101,21 @@ function parseSheet(sheetName: string, sheet: XLSX.WorkSheet | undefined): Permi
     const folderName = normalizeWhitespace(rawFolder);
     if (!folderName) continue;
 
-    const depth = Math.max(0, Math.floor(leadingSpaceCount(rawFolder) / 2));
-    pathStack[depth] = folderName;
-    pathStack.length = depth + 1;
+    const rawDepth = Math.max(0, Math.round(leadingSpaceCount(rawFolder) / indentUnit));
 
-    const relativePath = pathStack.join("/");
-    const folderPath = `${sheetName}/${relativePath}`;
+    // The first data row conventionally restates the phase/sheet name itself (its own permissions
+    // row for the top folder). Treating it like a normal child would prefix the sheet name onto
+    // itself (e.g. "31-VORPROJEKT/31-VORPROJEKT"), a path that can never exist. Its depth is set to
+    // -1 (distinct from any real row) so consumers can recognize it refers to the phase root itself
+    // rather than a nested folder.
+    const isPhaseRootRow = matrixRows.length === 0 && rawDepth === 0 && normalizeLookup(folderName) === normalizeLookup(sheetName);
+
+    pathStack[rawDepth] = folderName;
+    pathStack.length = rawDepth + 1;
+
+    const relativePath = isPhaseRootRow ? "" : pathStack.join("/");
+    const folderPath = isPhaseRootRow ? sheetName : `${sheetName}/${relativePath}`;
+    const depth = isPhaseRootRow ? -1 : rawDepth;
     const permissions: Record<string, PermissionLevel> = {};
     const rawValues: Record<string, string> = {};
 

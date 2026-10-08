@@ -41,6 +41,11 @@ export function buildFolderCreationPlan(
   if (phaseRoot) resolvedIdByDepth.set(-1, phaseRoot.id);
 
   matrix.rows.forEach((row) => {
+    // depth -1 marks the row that restates the phase root itself (see parser.ts); it's already
+    // covered by the phaseRoot step above, so a normal step here would try to create/find a
+    // duplicate folder nested inside itself.
+    if (row.depth === -1) return;
+
     const parentId = row.depth === 0 ? resolvedIdByDepth.get(-1) : resolvedIdByDepth.get(row.depth - 1);
     const existing = parentId ? findChild(parentId, row.folderName) : undefined;
 
