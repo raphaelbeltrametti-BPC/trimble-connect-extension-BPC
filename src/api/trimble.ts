@@ -240,6 +240,17 @@ export class TrimbleClient {
     return folders;
   }
 
+  /** Reads the explicit ACL of a folder (READ / FULL_ACCESS actor ids). */
+  async getFolderPermissions(folderId: string): Promise<{ READ: string[]; FULL_ACCESS: string[] }> {
+    const response = await this.request<any>(`/folders/fs/${encodeURIComponent(folderId)}/permissions`);
+    const acl = response?.acl ?? response ?? {};
+    const ids = (value: unknown): string[] =>
+      Array.isArray(value)
+        ? value.map((entry) => String(typeof entry === "object" && entry ? (entry as any).id ?? "" : entry)).filter(Boolean)
+        : [];
+    return { READ: ids(acl.READ), FULL_ACCESS: ids(acl.FULL_ACCESS) };
+  }
+
   /**
    * The API rejects the request outright if the ACL object contains a "NO_ACCESS" field at all
    * ("Invalid ACL field. Only supported fields are: READ and FULL_ACCESS") - actors simply

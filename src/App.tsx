@@ -3,6 +3,7 @@ import { API_BASE_URLS, TrimbleApiError, TrimbleClient } from "./api/trimble";
 import { useApi } from "./hooks/useApi";
 import { buildPermissionPlan } from "./permissions/planner";
 import { buildFolderCreationPlan } from "./permissions/folderPlanner";
+import type { ExportSheet } from "./excel/export";
 import type {
   ApiRegion,
   FolderCreationStep,
@@ -282,10 +283,12 @@ export default function App() {
   }, [deleteMarks, groups, unusedGroups]);
 
   const planStats = useMemo(() => {
-    const ready = plan.filter((item) => item.status === "ready").length;
-    const missingFolders = plan.filter((item) => item.status === "missing-folder").length;
-    const missingGroups = plan.filter((item) => item.status === "missing-groups").length;
-    return { ready, missingFolders, missingGroups };
+    const done = plan.filter((item) => item.appliedAt).length;
+    const pending = plan.filter((item) => !item.appliedAt);
+    const ready = pending.filter((item) => item.status === "ready").length;
+    const missingFolders = pending.filter((item) => item.status === "missing-folder").length;
+    const missingGroups = pending.filter((item) => item.status === "missing-groups").length;
+    return { ready, done, missingFolders, missingGroups };
   }, [plan]);
 
   function addLog(level: LogEntry["level"], message: string, detail?: string) {
@@ -574,6 +577,74 @@ export default function App() {
     if (failed > 0) setActiveTab("log");
   }
 
+  async function exportCurrentMatrix() {
+    if (!workbook) {
+      addLog("warning", "Bitte zuerst die Berechtigungsmatrix laden (dient als Struktur fuer den Export).");
+      return;
+    }
+
+    setBusy("export");
+    try {
+      const activeGroups = groups.length > 0 ? groups : await loadGroups();
+      const activeFolders = folders.length > 0 ? folders : await scanFolders();
+      const stripPrefix = (id: string) => id.replace(/^tc-groups:/, "");
+      const groupIdByTeam = new Map(activeGroups.map((group) => [normalizeLookup(group.name), stripPrefix(group.id)]));
+
+      const plans = workbook.matrices.map((matrix) => ({ matrix, items: buildPermissionPlan(matrix, activeGroups, activeFolders) }));
+      const total = plans.reduce((sum, entry) => sum + entry.items.filter((item) => item.folderId).length, 0);
+      let done = 0;
+      let failed = 0;
+      setProgress({ current: 0, total, label: "Berechtigungen auslesen" });
+
+      const sheets: ExportSheet[] = [];
+      for (const { matrix, items } of plans) {
+        const rows: ExportSheet["rows"] = [];
+
+        for (let index = 0; index < matrix.rows.length; index += 1) {
+          const row = matrix.rows[index];
+          const item = items[index];
+          let values = matrix.teams.map(() => "");
+
+          if (item?.folderId) {
+            try {
+              const acl = await client.getFolderPermissions(item.folderId);
+              const full = new Set(acl.FULL_ACCESS.map(stripPrefix));
+              const read = new Set(acl.READ.map(stripPrefix));
+              values = matrix.teams.map((team) => {
+                const groupId = groupIdByTeam.get(normalizeLookup(team));
+                if (!groupId) return "";
+                return full.has(groupId) ? "V" : read.has(groupId) ? "L" : "";
+              });
+            } catch (error) {
+              failed += 1;
+              addLog("error", `Berechtigungen nicht lesbar: ${row.folderPath}.`, formatError(error));
+            }
+            done += 1;
+            setProgress({ current: done, total, label: "Berechtigungen auslesen" });
+          }
+
+          rows.push({ depth: row.depth, folderName: row.folderName, values });
+        }
+
+        sheets.push({ name: matrix.sheetName, teams: matrix.teams, rows });
+      }
+
+      const { downloadCurrentMatrix } = await import("./excel/export");
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadCurrentMatrix(sheets, `Berechtigungsmatrix-Ist-${stamp}.xlsx`);
+      addLog(
+        failed > 0 ? "warning" : "success",
+        `Aktuelle Matrix exportiert (${sheets.length} Phasen, ${total} Ordner ausgelesen, ${failed} Fehler).`,
+        "Ordner ohne Treffer in Trimble und Teams ohne Gruppe sind leer."
+      );
+    } catch (error) {
+      addLog("error", "Export fehlgeschlagen.", formatError(error));
+    } finally {
+      setBusy("");
+      setProgress({ current: 0, total: 0, label: "" });
+    }
+  }
+
   async function createDryRun() {
     if (!currentMatrix) {
       addLog("warning", "Bitte zuerst eine Phase aus der Matrix waehlen.");
@@ -611,7 +682,7 @@ export default function App() {
     }
 
     const readyItems = plan.filter(
-      (item) => item.folderId && (item.status === "ready" || (allowPartial && item.status === "missing-groups"))
+      (item) => !item.appliedAt && item.folderId && (item.status === "ready" || (allowPartial && item.status === "missing-groups"))
     );
     if (readyItems.length === 0) {
       addLog("warning", "Keine bereiten Ordner im Dry-Run.");
@@ -851,6 +922,7 @@ export default function App() {
             onScanFolders={scanFolders}
             onDryRun={createDryRun}
             onApply={applyPermissions}
+            onExport={exportCurrentMatrix}
           />
         )}
 
@@ -1127,7 +1199,7 @@ interface PermissionsTabProps {
   groups: TCGroup[];
   projectDetails: TCProject | null;
   plan: PermissionPlanItem[];
-  planStats: { ready: number; missingFolders: number; missingGroups: number };
+  planStats: { ready: number; done: number; missingFolders: number; missingGroups: number };
   progress: ProgressState;
   allowApply: boolean;
   allowPartial: boolean;
@@ -1138,11 +1210,15 @@ interface PermissionsTabProps {
   onScanFolders: () => void;
   onDryRun: () => void;
   onApply: () => void;
+  onExport: () => void;
 }
 
 function PermissionsTab(props: PermissionsTabProps) {
+  const missingGroupNames = Array.from(new Set(props.plan.flatMap((item) => item.missingGroups))).sort((a, b) =>
+    a.localeCompare(b, "de")
+  );
   const applicableCount = props.plan.filter(
-    (item) => item.folderId && (item.status === "ready" || (props.allowPartial && item.status === "missing-groups"))
+    (item) => !item.appliedAt && item.folderId && (item.status === "ready" || (props.allowPartial && item.status === "missing-groups"))
   ).length;
 
   return (
@@ -1180,6 +1256,13 @@ function PermissionsTab(props: PermissionsTabProps) {
           <button onClick={props.onLoadGroups} disabled={props.busy}>Gruppen laden</button>
           <button onClick={props.onScanFolders} disabled={props.busy}>Ordner scannen</button>
           <button className="primary" onClick={props.onDryRun} disabled={props.busy || !props.currentMatrix}>Dry-Run</button>
+          <button
+            onClick={props.onExport}
+            disabled={props.busy || !props.workbook}
+            title="Aktuelle Berechtigungen aus Trimble als Matrix (Excel) exportieren"
+          >
+            Aktuelle Matrix exportieren
+          </button>
         </div>
       </section>
 
@@ -1187,11 +1270,29 @@ function PermissionsTab(props: PermissionsTabProps) {
         <div className="panel-title-row">
           <h2>Dry-Run</h2>
           <div className="summary-pills">
+            <span className="pill ok">{props.planStats.done} erledigt</span>
             <span className="pill ok">{props.planStats.ready} bereit</span>
             <span className="pill warn">{props.planStats.missingFolders} Ordner fehlen</span>
             <span className="pill warn">{props.planStats.missingGroups} Gruppen fehlen</span>
           </div>
         </div>
+        {props.plan.length > 0 && (
+          missingGroupNames.length === 0 && props.planStats.missingFolders === 0 ? (
+            <div className="banner info">Alle Ordner und Gruppen sind vorhanden. Die Berechtigungen koennen angewendet werden.</div>
+          ) : (
+            <div className="banner warning">
+              {props.planStats.missingFolders > 0 && (
+                <div>{props.planStats.missingFolders} Ordner fehlen: zuerst im Register "Ordner erstellen" anlegen.</div>
+              )}
+              {missingGroupNames.length > 0 && (
+                <div>
+                  {missingGroupNames.length} Teams fehlen in Trimble (im Register "Teams" erstellen):{" "}
+                  {missingGroupNames.slice(0, 8).join(", ")}{missingGroupNames.length > 8 ? " ..." : ""}
+                </div>
+              )}
+            </div>
+          )
+        )}
         <div className="apply-row">
           <label className="check">
             <input
