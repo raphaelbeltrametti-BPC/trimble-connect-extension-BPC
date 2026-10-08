@@ -149,6 +149,22 @@ export class TrimbleClient {
   }
 
   /**
+   * Looks up a direct child (folder OR file) by name, case-insensitively. Used to resolve a
+   * 409 DUPLICATE_NAME on createFolder: the name is taken, but the scanned tree didn't know it.
+   */
+  async findChildByName(parentId: string, name: string): Promise<{ id: string; name: string; isFolder: boolean } | undefined> {
+    const wanted = name.trim().toLowerCase();
+    const items = await this.listFolderItems(parentId);
+    for (const item of items) {
+      const itemName = String(item.nm ?? item.name ?? "");
+      if (itemName.trim().toLowerCase() === wanted) {
+        return { id: String(item.id ?? ""), name: itemName, isFolder: isFolder(item) };
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Performs one raw request and returns status/body verbatim (even on non-2xx), so the caller
    * can surface exactly what the Trimble API sent back (e.g. in the UI log) without needing
    * browser devtools access to the extension's iframe.

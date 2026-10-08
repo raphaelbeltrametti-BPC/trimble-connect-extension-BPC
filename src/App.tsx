@@ -54,6 +54,7 @@ export default function App() {
   const [busy, setBusy] = useState("");
   const [progress, setProgress] = useState<ProgressState>({ current: 0, total: 0, label: "" });
   const [allowApply, setAllowApply] = useState(false);
+  const [allowPartial, setAllowPartial] = useState(true);
   const [targetParentId, setTargetParentId] = useState("");
   const [targetParentFilter, setTargetParentFilter] = useState("");
   const [folderPlan, setFolderPlan] = useState<FolderCreationStep[]>([]);
@@ -512,8 +513,42 @@ export default function App() {
         created += 1;
         addLog("success", `Ordner erstellt: ${step.path}.`);
       } catch (error) {
-        failed += 1;
-        addLog("error", `Ordner konnte nicht erstellt werden: ${step.path}.`, formatError(error));
+        if (error instanceof TrimbleApiError && error.status === 409) {
+          // Name belegt: den vorhandenen Ordner uebernehmen, statt abzubrechen.
+          try {
+            const match = await client.findChildByName(parentId, step.name);
+            if (match?.isFolder) {
+              const parentPath = newFolders.find((f) => f.id === parentId)?.path
+                ?? folders.find((f) => f.id === parentId)?.path
+                ?? "";
+              newFolders.push({
+                id: match.id,
+                name: match.name,
+                type: "FOLDER",
+                parentId,
+                path: parentPath ? `${parentPath}/${match.name}` : match.name,
+                depth: step.depth,
+              });
+              resolvedIdByDepth.set(step.depth, match.id);
+              addLog("info", `Ordner existierte bereits (beim Scan nicht erfasst), uebernommen: ${step.path}.`);
+            } else {
+              failed += 1;
+              addLog(
+                "error",
+                `Name bereits belegt: ${step.path}.`,
+                match
+                  ? "Unter diesem Namen existiert eine Datei, kein Ordner. Bitte in Trimble Connect umbenennen oder loeschen."
+                  : "Der Name ist belegt, aber der Eintrag ist fuer dieses Konto nicht sichtbar (z.B. fehlende Leserechte oder Papierkorb). In Trimble Connect pruefen."
+              );
+            }
+          } catch (lookupError) {
+            failed += 1;
+            addLog("error", `Ordner konnte nicht erstellt werden: ${step.path}.`, formatError(error) + "\n" + formatError(lookupError));
+          }
+        } else {
+          failed += 1;
+          addLog("error", `Ordner konnte nicht erstellt werden: ${step.path}.`, formatError(error));
+        }
       }
 
       progressDone += 1;
@@ -522,12 +557,21 @@ export default function App() {
 
     if (newFolders.length > 0) {
       setFolders((current) => [...current, ...newFolders]);
+      // Plan neu berechnen, damit erstellte Ordner als "Vorhanden" erscheinen und nicht erneut erstellt werden.
+      setFolderPlan(buildFolderCreationPlan(currentMatrix, [...folders, ...newFolders], effectiveTargetParentId));
     }
 
     setAllowCreateFolders(false);
     setBusy("");
     setProgress({ current: 0, total: 0, label: "" });
     addLog("info", `Ordner-Erstellung fertig. Erstellt: ${created}, Fehler: ${failed}.`);
+
+    // Ordnerbaum automatisch neu einlesen und Plan daraus aktualisieren.
+    const tree = await scanFolders();
+    if (tree.length > 0) {
+      setFolderPlan(buildFolderCreationPlan(currentMatrix, tree, effectiveTargetParentId));
+    }
+    if (failed > 0) setActiveTab("log");
   }
 
   async function createDryRun() {
@@ -566,7 +610,9 @@ export default function App() {
       return;
     }
 
-    const readyItems = plan.filter((item) => item.status === "ready" && item.folderId);
+    const readyItems = plan.filter(
+      (item) => item.folderId && (item.status === "ready" || (allowPartial && item.status === "missing-groups"))
+    );
     if (readyItems.length === 0) {
       addLog("warning", "Keine bereiten Ordner im Dry-Run.");
       return;
@@ -797,6 +843,8 @@ export default function App() {
             planStats={planStats}
             progress={progress}
             allowApply={allowApply}
+            allowPartial={allowPartial}
+            setAllowPartial={setAllowPartial}
             setAllowApply={setAllowApply}
             onWorkbook={handleWorkbook}
             onLoadGroups={loadGroups}
@@ -1082,6 +1130,8 @@ interface PermissionsTabProps {
   planStats: { ready: number; missingFolders: number; missingGroups: number };
   progress: ProgressState;
   allowApply: boolean;
+  allowPartial: boolean;
+  setAllowPartial: (value: boolean) => void;
   setAllowApply: (value: boolean) => void;
   onWorkbook: (file: File) => void;
   onLoadGroups: () => void;
@@ -1091,6 +1141,10 @@ interface PermissionsTabProps {
 }
 
 function PermissionsTab(props: PermissionsTabProps) {
+  const applicableCount = props.plan.filter(
+    (item) => item.folderId && (item.status === "ready" || (props.allowPartial && item.status === "missing-groups"))
+  ).length;
+
   return (
     <div className="panel-grid wide">
       <section className="panel">
@@ -1147,7 +1201,15 @@ function PermissionsTab(props: PermissionsTabProps) {
             />
             <span>Aenderungen wirklich anwenden</span>
           </label>
-          <button className="danger" onClick={props.onApply} disabled={props.busy || !props.allowApply || props.planStats.ready === 0}>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={props.allowPartial}
+              onChange={(event) => props.setAllowPartial(event.target.checked)}
+            />
+            <span>Auch Zeilen mit fehlenden Gruppen anwenden (fehlende Teams werden ausgelassen)</span>
+          </label>
+          <button className="danger" onClick={props.onApply} disabled={props.busy || !props.allowApply || applicableCount === 0}>
             Berechtigungen anwenden
           </button>
         </div>
@@ -1177,7 +1239,7 @@ function PermissionsTab(props: PermissionsTabProps) {
                     <td>{item.counts.fullAccess}</td>
                     <td>{item.counts.read}</td>
                     <td>{item.counts.noAccess}</td>
-                    <td>{item.missingGroups.slice(0, 3).join(", ")}{item.missingGroups.length > 3 ? " ..." : ""}</td>
+                    <td title={item.missingGroups.join(", ")}>{item.missingGroups.slice(0, 3).join(", ")}{item.missingGroups.length > 3 ? ` ... (+${item.missingGroups.length - 3})` : ""}</td>
                   </tr>
                 );
               })}
