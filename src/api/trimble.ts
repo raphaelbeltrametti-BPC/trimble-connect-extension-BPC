@@ -241,14 +241,44 @@ export class TrimbleClient {
   }
 
   /** Reads the explicit ACL of a folder (READ / FULL_ACCESS actor ids). */
-  async getFolderPermissions(folderId: string): Promise<{ READ: string[]; FULL_ACCESS: string[] }> {
+  async getFolderPermissions(folderId: string): Promise<{ READ: string[]; FULL_ACCESS: string[]; raw: unknown }> {
     const response = await this.request<any>(`/folders/fs/${encodeURIComponent(folderId)}/permissions`);
-    const acl = response?.acl ?? response ?? {};
-    const ids = (value: unknown): string[] =>
-      Array.isArray(value)
-        ? value.map((entry) => String(typeof entry === "object" && entry ? (entry as any).id ?? "" : entry)).filter(Boolean)
-        : [];
-    return { READ: ids(acl.READ), FULL_ACCESS: ids(acl.FULL_ACCESS) };
+    const result = { READ: new Set<string>(), FULL_ACCESS: new Set<string>() };
+
+    const entryId = (entry: any): string => {
+      if (typeof entry === "string") return entry;
+      if (!entry || typeof entry !== "object") return "";
+      const direct = entry.id ?? entry.actorId ?? entry.groupId ?? entry.actor?.id ?? entry.principal?.id;
+      return direct ? String(direct) : "";
+    };
+    const levelOf = (value: unknown): "READ" | "FULL_ACCESS" | undefined => {
+      const text = String(value ?? "").toUpperCase().replace(/[\s-]/g, "_");
+      if (text === "READ") return "READ";
+      if (text === "FULL_ACCESS" || text === "FULL") return "FULL_ACCESS";
+      return undefined;
+    };
+
+    // The response shape is not documented reliably: walk it and pick up actors either from
+    // READ / FULL_ACCESS keyed arrays, or from entries carrying a permission/level field.
+    const walk = (node: unknown, inherited?: "READ" | "FULL_ACCESS", depth = 0): void => {
+      if (!node || typeof node !== "object" || depth > 6) return;
+      if (Array.isArray(node)) {
+        node.forEach((entry) => {
+          const own = entry && typeof entry === "object" ? levelOf((entry as any).permission ?? (entry as any).level ?? (entry as any).access ?? (entry as any).role) : undefined;
+          const level = own ?? inherited;
+          const id = entryId(entry);
+          if (id && level) result[level].add(id);
+          else walk(entry, inherited, depth + 1);
+        });
+        return;
+      }
+      Object.entries(node as Record<string, unknown>).forEach(([key, value]) => {
+        walk(value, levelOf(key) ?? inherited, depth + 1);
+      });
+    };
+    walk(response);
+
+    return { READ: [...result.READ], FULL_ACCESS: [...result.FULL_ACCESS], raw: response };
   }
 
   /**

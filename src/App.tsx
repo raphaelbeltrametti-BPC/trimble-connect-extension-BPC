@@ -587,13 +587,14 @@ export default function App() {
     try {
       const activeGroups = groups.length > 0 ? groups : await loadGroups();
       const activeFolders = folders.length > 0 ? folders : await scanFolders();
-      const stripPrefix = (id: string) => id.replace(/^tc-groups:/, "");
+      const stripPrefix = (id: string) => id.replace(/^[a-z-]+:/i, "").toLowerCase();
       const groupIdByTeam = new Map(activeGroups.map((group) => [normalizeLookup(group.name), stripPrefix(group.id)]));
 
       const plans = workbook.matrices.map((matrix) => ({ matrix, items: buildPermissionPlan(matrix, activeGroups, activeFolders) }));
       const total = plans.reduce((sum, entry) => sum + entry.items.filter((item) => item.folderId).length, 0);
       let done = 0;
       let failed = 0;
+      let sampleLogged = false;
       setProgress({ current: 0, total, label: "Berechtigungen auslesen" });
 
       const sheets: ExportSheet[] = [];
@@ -610,6 +611,14 @@ export default function App() {
               const acl = await client.getFolderPermissions(item.folderId);
               const full = new Set(acl.FULL_ACCESS.map(stripPrefix));
               const read = new Set(acl.READ.map(stripPrefix));
+              if (!sampleLogged) {
+                sampleLogged = true;
+                addLog(
+                  "info",
+                  `Export-Diagnose: ${row.folderPath}: ${full.size} Voll, ${read.size} Lesen, ${groupIdByTeam.size} Gruppen bekannt.`,
+                  `Antwort: ${JSON.stringify(acl.raw).slice(0, 600)} | Beispiel-Gruppen-ID: ${Array.from(groupIdByTeam.values())[0] ?? "-"}`
+                );
+              }
               values = matrix.teams.map((team) => {
                 const groupId = groupIdByTeam.get(normalizeLookup(team));
                 if (!groupId) return "";
@@ -710,7 +719,21 @@ export default function App() {
       }
 
       try {
-        await client.updateFolderPermissions(item.folderId!, item.acl, false);
+        // Bestehende Eintraege, die nicht in der Matrix vorkommen (zusaetzliche Teams, Benutzer),
+        // bleiben erhalten - nur Matrix-Teams werden ueberschrieben.
+        const managed = new Set([...item.acl.READ, ...item.acl.FULL_ACCESS, ...item.acl.NO_ACCESS]);
+        const current = await client.getFolderPermissions(item.folderId!);
+        const extraFull = current.FULL_ACCESS.filter((id) => !managed.has(id));
+        const extraRead = current.READ.filter((id) => !managed.has(id) && !extraFull.includes(id));
+        const merged = {
+          ...item.acl,
+          FULL_ACCESS: [...item.acl.FULL_ACCESS, ...extraFull],
+          READ: [...item.acl.READ, ...extraRead],
+        };
+        if (merged.READ.length > 100 || merged.FULL_ACCESS.length > 100) {
+          throw new Error("Mehr als 100 Eintraege inkl. zusaetzlicher Teams (API-Limit)");
+        }
+        await client.updateFolderPermissions(item.folderId!, merged, false);
         applied += 1;
         markPlanItem(item.rowNumber, item.folderPath, { appliedAt: new Date().toISOString(), applyError: undefined });
       } catch (error) {
@@ -1015,7 +1038,9 @@ function TeamsTab(props: TeamsTabProps) {
               </tr>
             </thead>
             <tbody>
-              {props.groups.map((group) => {
+              {[...props.groups]
+                .sort((a, b) => Number(props.markedIds.has(b.id)) - Number(props.markedIds.has(a.id)))
+                .map((group) => {
                 const marked = props.markedIds.has(group.id);
                 return (
                   <tr key={group.id} className={marked ? "marked-delete" : undefined}>
@@ -1077,6 +1102,18 @@ interface FoldersTabProps {
 
 function FoldersTab(props: FoldersTabProps) {
   const toCreate = props.folderPlan.filter((step) => step.status === "create").length;
+  const [folderSort, setFolderSort] = useState<{ key: "status" | "path"; dir: 1 | -1 } | null>(null);
+  const sortedPlan = folderSort
+    ? [...props.folderPlan].sort((a, b) =>
+        folderSort.dir *
+        (folderSort.key === "status"
+          ? a.status.localeCompare(b.status)
+          : a.path.localeCompare(b.path, "de"))
+      )
+    : props.folderPlan;
+  const toggleSort = (key: "status" | "path") =>
+    setFolderSort((prev) => (prev?.key === key ? { key, dir: prev.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
+  const sortMark = (key: "status" | "path") => (folderSort?.key === key ? (folderSort.dir === 1 ? " ▲" : " ▼") : "");
 
   return (
     <div className="panel-grid wide">
@@ -1167,10 +1204,13 @@ function FoldersTab(props: FoldersTabProps) {
         <div className="table-wrap plan-table">
           <table>
             <thead>
-              <tr><th>Status</th><th>Pfad</th></tr>
+              <tr>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleSort("status")}>Status{sortMark("status")}</th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleSort("path")}>Pfad{sortMark("path")}</th>
+              </tr>
             </thead>
             <tbody>
-              {props.folderPlan.map((step) => (
+              {sortedPlan.map((step) => (
                 <tr key={`${step.rowNumber}-${step.path}`}>
                   <td><span className={`state ${step.status === "create" ? "missing-folder" : "ready"}`}>{step.status === "create" ? "Wird erstellt" : "Vorhanden"}</span></td>
                   <td>{step.path}</td>
@@ -1282,7 +1322,7 @@ function PermissionsTab(props: PermissionsTabProps) {
           ) : (
             <div className="banner warning">
               {props.planStats.missingFolders > 0 && (
-                <div>{props.planStats.missingFolders} Ordner fehlen: zuerst im Register "Ordner erstellen" anlegen.</div>
+                <div>{props.planStats.missingFolders} Ordner fehlen in Trimble und werden beim Anwenden ausgelassen (optional im Register "Ordner erstellen" anlegen).</div>
               )}
               {missingGroupNames.length > 0 && (
                 <div>
