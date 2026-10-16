@@ -48,3 +48,23 @@ export function clearStoredWorkbook(projectId: string): void {
     // Ignore.
   }
 }
+
+const APPLIED_PREFIX = "tc-permission-applied:v1:";
+
+/** Merkt sich pro Ordner, wann Berechtigungen angewendet wurden (ueberlebt Neustarts der Extension). */
+export function loadAppliedMap(projectId: string): Record<string, string> {
+  try {
+    const raw = window.localStorage.getItem(`${APPLIED_PREFIX}${projectId}`);
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveAppliedMap(projectId: string, map: Record<string, string>): void {
+  try {
+    window.localStorage.setItem(`${APPLIED_PREFIX}${projectId}`, JSON.stringify(map));
+  } catch {
+    // Ignore.
+  }
+}

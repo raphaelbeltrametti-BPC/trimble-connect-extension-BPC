@@ -17,7 +17,7 @@ import type {
   WorkbookModel,
 } from "./types";
 import { normalizeLookup } from "./utils/text";
-import { loadStoredWorkbook, saveStoredWorkbook } from "./utils/workbookStorage";
+import { loadAppliedMap, loadStoredWorkbook, saveAppliedMap, saveStoredWorkbook } from "./utils/workbookStorage";
 import "./index.css";
 
 type TabId = "teams" | "folders" | "permissions" | "log";
@@ -667,12 +667,50 @@ export default function App() {
       const nextPlan = buildPermissionPlan(currentMatrix, activeGroups, activeFolders);
       setPlan(nextPlan);
 
+      // Abgleich mit dem Ist-Stand in Trimble: stimmen die Berechtigungen schon, gilt die Zeile als erledigt.
+      const projectId = effectiveProject?.id;
+      const candidates = nextPlan.filter((item) => item.folderId && item.status !== "missing-folder");
+      if (projectId && candidates.length > 0) {
+        const appliedMap = loadAppliedMap(projectId);
+        const norm = (id: string) => id.replace(/^[a-z-]+:/i, "").toLowerCase();
+        let matched = 0;
+        let checked = 0;
+        setProgress({ current: 0, total: candidates.length, label: "Ist-Stand abgleichen" });
+
+        for (const item of candidates) {
+          try {
+            const current = await client.getFolderPermissions(item.folderId!);
+            const full = new Set(current.FULL_ACCESS.map(norm));
+            const read = new Set(current.READ.map(norm));
+            const same =
+              item.acl.FULL_ACCESS.every((id) => full.has(norm(id))) &&
+              item.acl.READ.every((id) => read.has(norm(id)) && !full.has(norm(id))) &&
+              item.acl.NO_ACCESS.every((id) => !full.has(norm(id)) && !read.has(norm(id)));
+            if (same) {
+              const appliedAt = appliedMap[item.folderId!] ?? new Date().toISOString();
+              appliedMap[item.folderId!] = appliedAt;
+              matched += 1;
+              markPlanItem(item.rowNumber, item.folderPath, { appliedAt });
+            } else if (appliedMap[item.folderId!]) {
+              delete appliedMap[item.folderId!];
+            }
+          } catch (error) {
+            addLog("warning", `Ist-Stand nicht lesbar: ${item.folderPath}.`, formatError(error));
+          }
+          checked += 1;
+          setProgress({ current: checked, total: candidates.length, label: "Ist-Stand abgleichen" });
+        }
+        saveAppliedMap(projectId, appliedMap);
+        addLog("info", `Abgleich: ${matched} von ${candidates.length} Ordnern stimmen bereits mit der Matrix ueberein (erledigt).`);
+      }
+
       const ready = nextPlan.filter((item) => item.status === "ready").length;
       const missingFolders = nextPlan.filter((item) => item.status === "missing-folder").length;
       const missingGroups = nextPlan.filter((item) => item.status === "missing-groups").length;
       addLog("info", `Dry-Run erstellt: ${ready} bereit, ${missingFolders} Ordner fehlen, ${missingGroups} mit fehlenden Gruppen.`);
     } finally {
       setBusy("");
+      setProgress({ current: 0, total: 0, label: "" });
     }
   }
 
@@ -735,7 +773,11 @@ export default function App() {
         }
         await client.updateFolderPermissions(item.folderId!, merged, false);
         applied += 1;
-        markPlanItem(item.rowNumber, item.folderPath, { appliedAt: new Date().toISOString(), applyError: undefined });
+        const appliedAt = new Date().toISOString();
+        if (effectiveProject?.id) {
+          saveAppliedMap(effectiveProject.id, { ...loadAppliedMap(effectiveProject.id), [item.folderId!]: appliedAt });
+        }
+        markPlanItem(item.rowNumber, item.folderPath, { appliedAt, applyError: undefined });
       } catch (error) {
         addLog("error", `Berechtigungen fehlgeschlagen: ${item.folderPath}.`, formatError(error));
         markPlanItem(item.rowNumber, item.folderPath, { applyError: formatError(error) });
