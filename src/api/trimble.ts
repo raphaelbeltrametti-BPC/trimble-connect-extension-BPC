@@ -1,4 +1,6 @@
-import type { ApiRegion, FolderAcl, TCFolder, TCGroup, TCProject } from "../types";
+import type { ApiRegion, FolderAcl, TCFolder, TCGroup, TCProject, TCUser } from "../types";
+
+export const ACCESS_GROUP_NAME = "_App-Zugriff";
 
 export const API_BASE_URLS: Record<Exclude<ApiRegion, "custom">, string> = {
   us: "https://app.connect.trimble.com/tc/api/2.0",
@@ -104,6 +106,11 @@ export class TrimbleClient {
   }
 
   async listGroups(projectId: string): Promise<TCGroup[]> {
+    const all = await this.listAllGroups(projectId);
+    return all.filter((group) => group.name !== ACCESS_GROUP_NAME);
+  }
+
+  private async listAllGroups(projectId: string): Promise<TCGroup[]> {
     const groups = await this.request<any[]>(`/groups?projectId=${encodeURIComponent(projectId)}`);
 
     return (Array.isArray(groups) ? groups : []).map((group) => ({
@@ -112,6 +119,62 @@ export class TrimbleClient {
       projectId: group.projectId,
       usersCount: typeof group.usersCount === "number" ? group.usersCount : undefined,
     })).filter((group) => group.id && group.name);
+  }
+
+  private toAppUser(raw: any): TCUser {
+    const first = String(raw?.firstName ?? "").trim();
+    const last = String(raw?.lastName ?? "").trim();
+    const email = String(raw?.email ?? raw?.userName ?? "");
+    return {
+      id: String(raw?.id ?? raw?.userId ?? ""),
+      email,
+      name: `${first} ${last}`.trim() || email,
+      role: typeof raw?.role === "string" ? raw.role.toUpperCase() : undefined,
+    };
+  }
+
+  async getCurrentUser(): Promise<TCUser> {
+    return this.toAppUser(await this.request<any>("/users/me"));
+  }
+
+  /** Alle Projektmitglieder mit ihrer Rolle (GET /projects/{id}/users). */
+  async listProjectUsers(projectId: string): Promise<TCUser[]> {
+    const users = await this.request<any>(`/projects/${encodeURIComponent(projectId)}/users`);
+    const list = Array.isArray(users) ? users : users?.items ?? [];
+    return list.map((raw: any) => this.toAppUser(raw)).filter((user: TCUser) => user.id);
+  }
+
+  /**
+   * Die Liste der fuer die App freigegebenen Administratoren wird in einer versteckten
+   * Projektgruppe gefuehrt, damit sie fuer alle Nutzer des Projekts gleich gilt.
+   */
+  async getAccessGroup(projectId: string, create = false): Promise<{ group?: TCGroup; members: TCUser[] }> {
+    const groups = await this.listAllGroups(projectId);
+    let group = groups.find((entry) => entry.name === ACCESS_GROUP_NAME);
+    if (!group && create) group = await this.createGroup(projectId, ACCESS_GROUP_NAME);
+    if (!group) return { members: [] };
+
+    const users = await this.request<any>(`/groups/${encodeURIComponent(group.id)}/users`);
+    const list = Array.isArray(users) ? users : users?.items ?? [];
+    return { group, members: list.map((raw: any) => this.toAppUser(raw)).filter((user: TCUser) => user.id) };
+  }
+
+  async addAccessUser(projectId: string, userId: string): Promise<void> {
+    const { group } = await this.getAccessGroup(projectId, true);
+    if (!group) throw new Error("Zugriffsgruppe konnte nicht angelegt werden.");
+    const path = `/groups/${encodeURIComponent(group.id)}/users`;
+    try {
+      await this.request(path, { method: "POST", body: JSON.stringify([userId]) });
+    } catch (error) {
+      if (!(error instanceof TrimbleApiError) || error.status !== 400) throw error;
+      await this.request(path, { method: "POST", body: JSON.stringify([{ id: userId }]) });
+    }
+  }
+
+  async removeAccessUser(projectId: string, userId: string): Promise<void> {
+    const { group } = await this.getAccessGroup(projectId);
+    if (!group) return;
+    await this.request(`/groups/${encodeURIComponent(group.id)}/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
   }
 
   async createGroup(projectId: string, name: string): Promise<TCGroup> {

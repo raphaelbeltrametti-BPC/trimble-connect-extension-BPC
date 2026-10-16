@@ -13,6 +13,7 @@ import type {
   ProgressState,
   TCFolder,
   TCGroup,
+  TCUser,
   TCProject,
   WorkbookModel,
 } from "./types";
@@ -20,7 +21,7 @@ import { normalizeLookup } from "./utils/text";
 import { loadAppliedMap, loadStoredWorkbook, saveAppliedMap, saveStoredWorkbook } from "./utils/workbookStorage";
 import "./index.css";
 
-type TabId = "teams" | "folders" | "permissions" | "log";
+type TabId = "teams" | "folders" | "permissions" | "log" | "access";
 
 const HISTORY_LIMIT = 20;
 
@@ -209,6 +210,123 @@ export default function App() {
   const [accessState, setAccessState] = useState<"checking" | "admin" | "denied">("checking");
   const [accessRole, setAccessRole] = useState("");
   const [accessError, setAccessError] = useState("");
+  const [projectAdmins, setProjectAdmins] = useState<TCUser[]>([]);
+  const [allowedUsers, setAllowedUsers] = useState<TCUser[]>([]);
+  const [currentUser, setCurrentUser] = useState<TCUser | null>(null);
+  const [removedNotes, setRemovedNotes] = useState<{ name: string; email: string; at: string }[]>([]);
+  const [accessListWarning, setAccessListWarning] = useState("");
+
+  const removedKey = `tc-access-removed:v1:${effectiveProject?.id ?? ""}`;
+
+  // Liest Admins und freigegebene Nutzer neu ein. Mit autoRemove werden freigegebene Nutzer, die
+  // nicht mehr Projekt-Administrator sind, aus der Liste entfernt und als Hinweis vermerkt.
+  // Ergebnis "denied": Der aktuelle Nutzer steht nicht auf der (nicht leeren) Liste.
+  async function refreshAccessList(autoRemove: boolean): Promise<"allowed" | "denied"> {
+    const projectId = effectiveProject?.id;
+    if (!projectId) return "allowed";
+
+    try {
+      const [me, users, access] = await Promise.all([
+        client.getCurrentUser(),
+        client.listProjectUsers(projectId),
+        client.getAccessGroup(projectId),
+      ]);
+      const admins = users.filter((user) => user.role?.includes("ADMIN"));
+      let members = access.members;
+
+      if (autoRemove && users.length > 0) {
+        const adminIds = new Set(admins.map((user) => user.id));
+        const demoted = members.filter((member) => !adminIds.has(member.id));
+        const removed: { name: string; email: string; at: string }[] = [];
+        for (const member of demoted) {
+          try {
+            await client.removeAccessUser(projectId, member.id);
+            removed.push({ name: member.name, email: member.email, at: new Date().toISOString() });
+            members = members.filter((entry) => entry.id !== member.id);
+          } catch (error) {
+            addLog("warning", `Zugriff von ${member.name} konnte nicht entfernt werden.`, formatError(error));
+          }
+        }
+        if (removed.length > 0) {
+          let previous: typeof removed = [];
+          try {
+            previous = JSON.parse(window.localStorage.getItem(removedKey) ?? "[]");
+          } catch {
+            previous = [];
+          }
+          const merged = [...removed, ...previous].slice(0, 20);
+          try {
+            window.localStorage.setItem(removedKey, JSON.stringify(merged));
+          } catch {
+            // Ignore.
+          }
+          setRemovedNotes(merged);
+          addLog("warning", `Zugriff automatisch entfernt (nicht mehr Admin): ${removed.map((entry) => entry.name).join(", ")}.`);
+        }
+      }
+
+      setCurrentUser(me);
+      setProjectAdmins(admins);
+      setAllowedUsers(members);
+      setAccessListWarning("");
+      return members.length > 0 && !members.some((member) => member.id === me.id) ? "denied" : "allowed";
+    } catch (error) {
+      // Nicht lesbar: Admin-Rolle genuegt, damit sich niemand aussperrt.
+      setAccessListWarning(`Zugriffsliste nicht lesbar: ${formatError(error)}`);
+      return "allowed";
+    }
+  }
+
+  useEffect(() => {
+    try {
+      setRemovedNotes(JSON.parse(window.localStorage.getItem(removedKey) ?? "[]"));
+    } catch {
+      setRemovedNotes([]);
+    }
+  }, [removedKey]);
+
+  async function addAccessUser(userId: string) {
+    const projectId = effectiveProject?.id;
+    if (!projectId) return;
+    setBusy("access");
+    try {
+      // Erste Freigabe: den aktuellen Nutzer mit aufnehmen, damit er sich nicht aussperrt.
+      if (allowedUsers.length === 0 && currentUser && currentUser.id !== userId) {
+        await client.addAccessUser(projectId, currentUser.id);
+      }
+      await client.addAccessUser(projectId, userId);
+      await refreshAccessList(false);
+      addLog("success", "Administrator fuer die App freigegeben.");
+    } catch (error) {
+      addLog("error", "Freigabe fehlgeschlagen.", formatError(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function removeAccessUser(userId: string) {
+    const projectId = effectiveProject?.id;
+    if (!projectId) return;
+    setBusy("access");
+    try {
+      await client.removeAccessUser(projectId, userId);
+      await refreshAccessList(false);
+      addLog("success", "Freigabe entfernt.");
+    } catch (error) {
+      addLog("error", "Freigabe konnte nicht entfernt werden.", formatError(error));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function reloadAccess() {
+    setBusy("access");
+    try {
+      await refreshAccessList(true);
+    } finally {
+      setBusy("");
+    }
+  }
 
   useEffect(() => {
     if (!effectiveProject?.id) {
@@ -222,10 +340,16 @@ export default function App() {
 
     client
       .getProjectRole(effectiveProject.id)
-      .then((role) => {
+      .then(async (role) => {
         if (cancelled) return;
         setAccessRole(role ?? "");
-        setAccessState(role?.includes("ADMIN") ? "admin" : "denied");
+        if (!role?.includes("ADMIN")) {
+          setAccessState("denied");
+          return;
+        }
+        const listed = await refreshAccessList(true);
+        if (cancelled) return;
+        setAccessState(listed === "denied" ? "denied" : "admin");
       })
       .catch((error) => {
         if (cancelled) return;
@@ -806,10 +930,8 @@ export default function App() {
             <p>Berechtigung wird geprueft ...</p>
           ) : (
             <>
-              <h2>Keine Berechtigung</h2>
-              <p>Diese Extension steht nur Projekt-Administrator:innen zur Verfuegung.</p>
-              {accessRole && <p className="access-detail">Erkannte Rolle: {accessRole}</p>}
-              {accessError && <p className="access-detail">Pruefung fehlgeschlagen: {accessError}</p>}
+              <h2>Berechtigung fehlt für diese Applikation</h2>
+              {accessError &&<p className="access-detail">Pruefung fehlgeschlagen: {accessError}</p>}
             </>
           )}
         </div>
@@ -891,6 +1013,7 @@ export default function App() {
         <button className={activeTab === "folders" ? "active" : ""} onClick={() => setActiveTab("folders")}>Ordner erstellen</button>
         <button className={activeTab === "permissions" ? "active" : ""} onClick={() => setActiveTab("permissions")}>Berechtigungen</button>
         <button className={activeTab === "log" ? "active" : ""} onClick={() => setActiveTab("log")}>Protokoll</button>
+        <button className={activeTab === "access" ? "active" : ""} onClick={() => setActiveTab("access")}>App-Zugriff</button>
         <span className="history-actions">
           <button
             onClick={undo}
@@ -992,6 +1115,20 @@ export default function App() {
         )}
 
         {activeTab === "log" && <LogPanel logs={logs} />}
+
+        {activeTab === "access" && (
+          <AccessTab
+            busy={isBusy}
+            admins={projectAdmins}
+            allowed={allowedUsers}
+            currentUserId={currentUser?.id}
+            removedNotes={removedNotes}
+            warning={accessListWarning}
+            onReload={reloadAccess}
+            onAdd={addAccessUser}
+            onRemove={removeAccessUser}
+          />
+        )}
       </main>
 
       {progress.total > 0 && (
@@ -1020,6 +1157,119 @@ interface TeamsTabProps {
   onToggleMark: (groupId: string) => void;
   onCommitMarked: () => void;
   onKeepAll: () => void;
+}
+
+interface AccessTabProps {
+  busy: boolean;
+  admins: TCUser[];
+  allowed: TCUser[];
+  currentUserId?: string;
+  removedNotes: { name: string; email: string; at: string }[];
+  warning: string;
+  onReload: () => void;
+  onAdd: (userId: string) => void;
+  onRemove: (userId: string) => void;
+}
+
+function AccessTab(props: AccessTabProps) {
+  const [selected, setSelected] = useState("");
+  const allowedIds = new Set(props.allowed.map((user) => user.id));
+  const candidates = props.admins.filter((user) => !allowedIds.has(user.id));
+
+  return (
+    <div className="panel-grid">
+      <section className="panel">
+        <h2>App-Zugriff</h2>
+        <p className="hint">
+          Nur hier aufgeführte Projekt-Administratoren dürfen diese Applikation verwenden. Alle anderen sehen
+          „Berechtigung fehlt für diese Applikation“. Solange die Liste leer ist, haben alle Administratoren Zugriff.
+          Administratoren, die zurückgestuft wurden, werden beim Öffnen automatisch entfernt.
+        </p>
+        {props.warning && <div className="banner warning">{props.warning}</div>}
+        <div className="input-row">
+          <select value={selected} onChange={(event) => setSelected(event.target.value)} disabled={props.busy}>
+            <option value="">Administrator wählen ...</option>
+            {candidates.map((user) => (
+              <option key={user.id} value={user.id}>{user.name}{user.email && user.email !== user.name ? ` (${user.email})` : ""}</option>
+            ))}
+          </select>
+          <button
+            className="primary"
+            disabled={props.busy || !selected}
+            onClick={() => {
+              props.onAdd(selected);
+              setSelected("");
+            }}
+          >
+            Hinzufügen
+          </button>
+          <button onClick={props.onReload} disabled={props.busy} title="Aktuelle Administratoren neu laden">Aktualisieren</button>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>E-Mail</th>
+                <th aria-label="Entfernen"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {props.allowed.map((user) => (
+                <tr key={user.id}>
+                  <td>{user.name}{user.id === props.currentUserId && <span className="delete-note"> (du)</span>}</td>
+                  <td>{user.email}</td>
+                  <td className="row-remove">
+                    <button
+                      className="icon-button"
+                      onClick={() => props.onRemove(user.id)}
+                      disabled={props.busy || user.id === props.currentUserId}
+                      title={user.id === props.currentUserId ? "Eigener Zugriff kann nicht entfernt werden" : "Freigabe entfernen"}
+                      aria-label={`${user.name} entfernen`}
+                    >
+                      ×
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {props.allowed.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="empty-cell">Keine Auswahl – alle Projekt-Administratoren haben Zugriff</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Automatisch entfernt</h2>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Benutzer</th>
+                <th>Entfernt am</th>
+              </tr>
+            </thead>
+            <tbody>
+              {props.removedNotes.map((note, index) => (
+                <tr key={`${note.email}-${note.at}-${index}`}>
+                  <td>{note.name}{note.email && note.email !== note.name ? ` (${note.email})` : ""}</td>
+                  <td>{formatDateTime(note.at)} – nicht mehr Administrator</td>
+                </tr>
+              ))}
+              {props.removedNotes.length === 0 && (
+                <tr>
+                  <td colSpan={2} className="empty-cell">Keine automatischen Entfernungen</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function TeamsTab(props: TeamsTabProps) {

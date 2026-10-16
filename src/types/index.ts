@@ -101,3 +101,10 @@ export interface ProgressState {
   total: number;
   label: string;
 }
+
+export interface TCUser {
+  id: string;
+  email: string;
+  name: string;
+  role?: string;
+}
