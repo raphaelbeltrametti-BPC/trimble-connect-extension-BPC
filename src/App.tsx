@@ -1755,61 +1755,6 @@ function FoldersTab(props: FoldersTabProps) {
         <p className="hint">Aktueller Zielordner: <strong>{props.targetParentLabel || "unbekannt (zuerst Ordner scannen)"}</strong></p>
       </section>
 
-      <section className="panel span-2">
-        <div className="panel-title-row">
-          <h2>Ordner-Plan</h2>
-          <div className="summary-pills">
-            <span className="pill warn">{toCreate} werden erstellt</span>
-            <span className="pill ok">{props.folderPlan.length - toCreate} vorhanden</span>
-          </div>
-        </div>
-        <div className="inline-actions">
-          <button className="primary" onClick={props.onPlanFolders} disabled={props.busy || props.scopeStats.sheets === 0}>
-            Ordner-Plan erstellen
-          </button>
-        </div>
-        <div className="apply-row">
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={props.allowCreateFolders}
-              onChange={(event) => props.setAllowCreateFolders(event.target.checked)}
-            />
-            <span>Ordner wirklich erstellen</span>
-          </label>
-          <button
-            className="danger"
-            onClick={props.onCreateFolders}
-            disabled={props.busy || !props.allowCreateFolders || toCreate === 0}
-          >
-            Ordner erstellen
-          </button>
-        </div>
-        <div className="table-wrap plan-table">
-          <table>
-            <thead>
-              <tr>
-                <th style={{ cursor: "pointer" }} onClick={() => toggleSort("status")}>Status{sortMark("status")}</th>
-                <th style={{ cursor: "pointer" }} onClick={() => toggleSort("path")}>Pfad{sortMark("path")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedPlan.map((step) => (
-                <tr key={`${step.rowNumber}-${step.path}`}>
-                  <td><span className={`state ${step.status === "create" ? "missing-folder" : "ready"}`}>{step.status === "create" ? "Wird erstellt" : "Vorhanden"}</span></td>
-                  <td>{step.path}</td>
-                </tr>
-              ))}
-              {props.folderPlan.length === 0 && (
-                <tr>
-                  <td colSpan={2} className="empty-cell">Noch kein Ordner-Plan</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
       {props.extraFolders.length > 0 && (
         <section className="panel span-2">
           <div className="panel-title-row">
@@ -1869,6 +1814,62 @@ function FoldersTab(props: FoldersTabProps) {
           </div>
         </section>
       )}
+
+      <section className="panel span-2">
+        <div className="panel-title-row">
+          <h2>Ordner-Plan</h2>
+          <div className="summary-pills">
+            <span className="pill warn">{toCreate} werden erstellt</span>
+            <span className="pill ok">{props.folderPlan.length - toCreate} vorhanden</span>
+          </div>
+        </div>
+        <div className="inline-actions">
+          <button className="primary" onClick={props.onPlanFolders} disabled={props.busy || props.scopeStats.sheets === 0}>
+            Ordner-Plan erstellen
+          </button>
+        </div>
+        <div className="apply-row">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={props.allowCreateFolders}
+              onChange={(event) => props.setAllowCreateFolders(event.target.checked)}
+            />
+            <span>Ordner wirklich erstellen</span>
+          </label>
+          <button
+            className="danger"
+            onClick={props.onCreateFolders}
+            disabled={props.busy || !props.allowCreateFolders || toCreate === 0}
+          >
+            Ordner erstellen
+          </button>
+        </div>
+        <div className="table-wrap plan-table">
+          <table>
+            <thead>
+              <tr>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleSort("status")}>Status{sortMark("status")}</th>
+                <th style={{ cursor: "pointer" }} onClick={() => toggleSort("path")}>Pfad{sortMark("path")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedPlan.map((step) => (
+                <tr key={`${step.rowNumber}-${step.path}`}>
+                  <td><span className={`state ${step.status === "create" ? "missing-folder" : "ready"}`}>{step.status === "create" ? "Wird erstellt" : "Vorhanden"}</span></td>
+                  <td>{step.path}</td>
+                </tr>
+              ))}
+              {props.folderPlan.length === 0 && (
+                <tr>
+                  <td colSpan={2} className="empty-cell">Noch kein Ordner-Plan</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
     </div>
   );
 }
