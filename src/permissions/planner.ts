@@ -1,17 +1,42 @@
 import type { FolderAcl, PermissionMatrix, PermissionPlanItem, TCFolder, TCGroup } from "../types";
 import { actorIdForGroup, normalizeLookup, normalizePath } from "../utils/text";
 
+export interface PermissionPlanOptions {
+  /** Ordner, unter dem der Phasenordner (Blattname) liegt. */
+  targetParentId?: string;
+  /**
+   * Nur exakte Pfade unterhalb des Phasenordners zulassen (kein Treffer ueber Pfad-Endungen).
+   * Pflicht bei mehreren Phasen: gleiche Unterordner-Namen in anderen Phasen duerfen nie getroffen werden.
+   */
+  strict?: boolean;
+}
+
 export function buildPermissionPlan(
   matrix: PermissionMatrix,
   groups: TCGroup[],
-  folders: TCFolder[]
+  folders: TCFolder[],
+  options: PermissionPlanOptions = {}
 ): PermissionPlanItem[] {
   const groupByName = new Map(groups.map((group) => [normalizeLookup(group.name), group]));
   const foldersByPath = new Map(folders.map((folder) => [normalizePath(folder.path), folder]));
   const foldersBySuffix = buildSuffixIndex(folders);
 
+  // Liegt der Phasenordner an der erwarteten Stelle, gilt ausschliesslich der exakte Pfad darunter:
+  // fehlt ein Unterordner dort, ist er wirklich "fehlend" und wird nicht in einer anderen Phase gesucht.
+  const phaseRoot = options.targetParentId
+    ? folders.find(
+        (folder) =>
+          folder.parentId === options.targetParentId && normalizeLookup(folder.name) === normalizeLookup(matrix.sheetName)
+      )
+    : undefined;
+
   return matrix.rows.map((row) => {
-    const folder = findFolder(row.folderPath, row.relativePath, foldersByPath, foldersBySuffix);
+    let folder: TCFolder | undefined;
+    if (phaseRoot) {
+      folder = foldersByPath.get(normalizePath(row.relativePath ? `${phaseRoot.path}/${row.relativePath}` : phaseRoot.path));
+    } else if (!options.strict) {
+      folder = findFolder(row.folderPath, row.relativePath, foldersByPath, foldersBySuffix);
+    }
     const acl: FolderAcl = { READ: [], FULL_ACCESS: [], NO_ACCESS: [] };
     const missingGroups: string[] = [];
 
@@ -26,6 +51,7 @@ export function buildPermissionPlan(
     });
 
     return {
+      sheetName: matrix.sheetName,
       rowNumber: row.rowNumber,
       folderPath: row.folderPath,
       folderName: row.folderName,

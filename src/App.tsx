@@ -62,6 +62,9 @@ export default function App() {
   const [folderPlan, setFolderPlan] = useState<FolderCreationStep[]>([]);
   const [allowCreateFolders, setAllowCreateFolders] = useState(false);
   const [extraMarks, setExtraMarks] = useState<Record<string, boolean>>({});
+  const [allSheets, setAllSheets] = useState(false);
+  const [excludedSheets, setExcludedSheets] = useState<Record<string, boolean>>({});
+  const cancelRef = useRef(false);
 
   const snapshot: HistorySnapshot = { workbook, selectedSheet, groups, deleteMarks, folders, folderPlan, plan, targetParentId };
   const lastSnapshotRef = useRef<HistorySnapshot>(snapshot);
@@ -194,6 +197,11 @@ export default function App() {
     }
   }, [workbook, effectiveProject?.id]);
 
+  // Lange Laeufe (alle Blaetter) ueberdauern die Token-Laufzeit: das Token wird bei jeder Anfrage
+  // aus dem Ref gelesen, bei einem 401 neu angefordert.
+  const accessTokenRef = useRef(accessToken);
+  accessTokenRef.current = accessToken;
+
   const client = useMemo(
     () =>
       new TrimbleClient({
@@ -201,11 +209,15 @@ export default function App() {
         delayMs: 250,
         getToken: async () => {
           if (manualToken.trim()) return manualToken.trim();
-          if (accessToken) return accessToken;
+          if (accessTokenRef.current) return accessTokenRef.current;
+          return refreshAccessToken();
+        },
+        refreshToken: async () => {
+          if (manualToken.trim()) return manualToken.trim();
           return refreshAccessToken();
         },
       }),
-    [accessToken, baseUrl, manualToken, refreshAccessToken]
+    [baseUrl, manualToken, refreshAccessToken]
   );
 
   const [accessState, setAccessState] = useState<"checking" | "admin" | "denied">("checking");
@@ -369,6 +381,54 @@ export default function App() {
     [selectedSheet, workbook]
   );
 
+  const activeMatrices = useMemo(() => {
+    if (!workbook) return [];
+    if (allSheets) return workbook.matrices.filter((matrix) => !excludedSheets[matrix.sheetName]);
+    return currentMatrix ? [currentMatrix] : [];
+  }, [allSheets, currentMatrix, excludedSheets, workbook]);
+
+  const scopeStats = useMemo(
+    () => ({
+      sheets: activeMatrices.length,
+      folders: activeMatrices.reduce((sum, matrix) => sum + matrix.stats.folders, 0),
+      teams: new Set(activeMatrices.flatMap((matrix) => matrix.teams)).size,
+      fullAccess: activeMatrices.reduce((sum, matrix) => sum + matrix.stats.fullAccess, 0),
+      read: activeMatrices.reduce((sum, matrix) => sum + matrix.stats.read, 0),
+      noAccess: activeMatrices.reduce((sum, matrix) => sum + matrix.stats.noAccess, 0),
+    }),
+    [activeMatrices]
+  );
+
+  // Umfang gewechselt: bestehende Plaene gehoeren zum alten Umfang und werden verworfen.
+  function changeScope(nextAll: boolean, nextExcluded: Record<string, boolean>) {
+    setAllSheets(nextAll);
+    setExcludedSheets(nextExcluded);
+    setFolderPlan([]);
+    setPlan([]);
+    setExtraMarks({});
+    setAllowCreateFolders(false);
+    setAllowApply(false);
+  }
+
+  // Blattnamen, die in Trimble auf denselben Ordnernamen fallen wuerden (z.B. "Planung" und "Plänung").
+  function hasAmbiguousSheetNames(matrices: PermissionMatrix[]): boolean {
+    const seen = new Map<string, string>();
+    for (const matrix of matrices) {
+      const key = normalizeLookup(matrix.sheetName);
+      const other = seen.get(key);
+      if (other) {
+        addLog("error", `Blattnamen nicht eindeutig: "${other}" und "${matrix.sheetName}" waeren derselbe Ordner in Trimble.`, "Bitte eines der Blaetter abwaehlen oder umbenennen.");
+        return true;
+      }
+      seen.set(key, matrix.sheetName);
+    }
+    return false;
+  }
+
+  function buildFolderPlans(matrices: PermissionMatrix[], tree: TCFolder[], parentId: string): FolderCreationStep[] {
+    return matrices.flatMap((matrix) => buildFolderCreationPlan(matrix, tree, parentId));
+  }
+
   const effectiveTargetParentId = targetParentId || projectDetails?.rootId || "";
 
   const targetParentCandidates = useMemo(() => {
@@ -410,17 +470,19 @@ export default function App() {
   // Ordner unterhalb des Phasenordners, die nicht in der Matrix vorkommen (nur oberste Ebene je Zweig).
   // Standardmaessig zum Entfernen vorgemerkt; pro Zeile uebersteuerbar.
   const extraFolders = useMemo(() => {
-    const root = folderPlan[0];
-    if (!root?.folderId) return [];
-    const rootFolder = folders.find((folder) => folder.id === root.folderId);
-    if (!rootFolder) return [];
+    // Nur unterhalb der Phasenordner der geplanten Blaetter; alles andere wird nie angefasst.
+    const rootPaths = folderPlan
+      .filter((step) => step.depth === 0 && step.folderId)
+      .map((step) => folders.find((folder) => folder.id === step.folderId)?.path)
+      .filter((path): path is string => !!path);
+    if (rootPaths.length === 0) return [];
     const matched = new Set(folderPlan.map((step) => step.folderId).filter(Boolean) as string[]);
     return folders.filter(
       (folder) =>
         !matched.has(folder.id) &&
         !!folder.parentId &&
         matched.has(folder.parentId) &&
-        folder.path.startsWith(`${rootFolder.path}/`)
+        rootPaths.some((rootPath) => folder.path.startsWith(`${rootPath}/`))
     );
   }, [folderPlan, folders]);
 
@@ -431,15 +493,22 @@ export default function App() {
 
   async function removeExtraFolders() {
     const toDelete = extraFolders.filter((folder) => markedExtraIds.has(folder.id));
-    if (toDelete.length === 0 || !currentMatrix || !effectiveTargetParentId) return;
+    if (toDelete.length === 0 || activeMatrices.length === 0 || !effectiveTargetParentId) return;
     const names = toDelete.map((folder) => folder.path).join("\n");
     if (!window.confirm(`${toDelete.length} Ordner inkl. Inhalt in Trimble Connect endgueltig loeschen?\n\n${names}`)) return;
 
     setBusy("delete-folders");
+    cancelRef.current = false;
     setProgress({ current: 0, total: toDelete.length, label: "Ordner entfernen" });
     let deleted = 0;
+    let attempted = 0;
     for (let index = 0; index < toDelete.length; index += 1) {
+      if (cancelRef.current) {
+        addLog("warning", `Abgebrochen: ${toDelete.length - index} Ordner wurden nicht entfernt.`);
+        break;
+      }
       const folder = toDelete[index];
+      attempted += 1;
       try {
         await client.deleteFolder(folder.id);
         deleted += 1;
@@ -452,10 +521,10 @@ export default function App() {
     setExtraMarks({});
     setBusy("");
     setProgress({ current: 0, total: 0, label: "" });
-    addLog("info", `Ordner-Entfernung fertig. Entfernt: ${deleted}, Fehler: ${toDelete.length - deleted}.`);
+    addLog("info", `Ordner-Entfernung fertig. Entfernt: ${deleted}, Fehler: ${attempted - deleted}.`);
 
     const tree = await scanFolders();
-    if (tree.length > 0) setFolderPlan(buildFolderCreationPlan(currentMatrix, tree, effectiveTargetParentId));
+    if (tree.length > 0) setFolderPlan(buildFolderPlans(activeMatrices, tree, effectiveTargetParentId));
   }
 
   const planStats = useMemo(() => {
@@ -483,6 +552,8 @@ export default function App() {
   async function handleWorkbook(file: File) {
     setBusy("excel");
     setPlan([]);
+    setFolderPlan([]);
+    setExcludedSheets({});
     setDeleteMarks({});
     try {
       const { parseWorkbookFile } = await import("./excel/parser");
@@ -630,20 +701,35 @@ export default function App() {
   }
 
   function planMissingFolders() {
-    if (!currentMatrix) {
-      addLog("warning", "Bitte zuerst eine Phase aus der Matrix waehlen.");
+    if (activeMatrices.length === 0) {
+      addLog("warning", allSheets ? "Keine Tabellenblaetter ausgewaehlt." : "Bitte zuerst eine Phase aus der Matrix waehlen.");
       return;
     }
     if (!effectiveTargetParentId) {
       addLog("warning", "Kein Zielordner bekannt. Bitte zuerst Ordner scannen oder manuell waehlen.");
       return;
     }
+    if (hasAmbiguousSheetNames(activeMatrices)) return;
+    if (folders.length === 0) {
+      addLog("warning", "Es wurden noch keine Ordner gescannt. Bitte zuerst Ordner scannen, sonst wuerden alle Ordner als fehlend gelten.");
+      return;
+    }
 
-    const nextPlan = buildFolderCreationPlan(currentMatrix, folders, effectiveTargetParentId);
+    const nextPlan = buildFolderPlans(activeMatrices, folders, effectiveTargetParentId);
     setFolderPlan(nextPlan);
+    setExtraMarks({});
 
     const toCreate = nextPlan.filter((step) => step.status === "create").length;
-    addLog("info", `Ordner-Plan erstellt: ${toCreate} von ${nextPlan.length} Ordnern fehlen unter "${targetParentLabel}".`);
+    if (activeMatrices.length > 1) {
+      activeMatrices.forEach((matrix) => {
+        const steps = nextPlan.filter((step) => step.sheetName === matrix.sheetName);
+        addLog("info", `${matrix.sheetName}: ${steps.filter((step) => step.status === "create").length} von ${steps.length} Ordnern fehlen.`);
+      });
+    }
+    addLog(
+      "info",
+      `Ordner-Plan erstellt (${activeMatrices.length} Blatt/Blaetter): ${toCreate} von ${nextPlan.length} Ordnern fehlen unter "${targetParentLabel}".`
+    );
   }
 
   async function createMissingFolders() {
@@ -651,13 +737,15 @@ export default function App() {
       addLog("warning", "Erstellen blockiert: Checkbox fuer Ordner-Erstellung ist nicht gesetzt.");
       return;
     }
-    if (!currentMatrix || folderPlan.length === 0) {
+    if (activeMatrices.length === 0 || folderPlan.length === 0) {
       addLog("warning", "Bitte zuerst einen Ordner-Plan erstellen.");
       return;
     }
     if (!effectiveTargetParentId) return;
 
     setBusy("create-folders");
+    cancelRef.current = false;
+    let cancelled = false;
     const toCreate = folderPlan.filter((step) => step.status === "create").length;
     setProgress({ current: 0, total: toCreate, label: "Ordner erstellen" });
 
@@ -668,6 +756,17 @@ export default function App() {
     const newFolders: TCFolder[] = [];
 
     for (const step of folderPlan) {
+      if (cancelRef.current) {
+        cancelled = true;
+        break;
+      }
+
+      // Eintraege gleicher oder tieferer Ebene gehoeren zu frueheren Geschwistern/Blaettern und duerfen
+      // nie als Eltern eines spaeteren Ordners dienen (sonst landet er im falschen Ordner).
+      for (const depth of Array.from(resolvedIdByDepth.keys())) {
+        if (depth >= step.depth) resolvedIdByDepth.delete(depth);
+      }
+
       const parentId = step.depth === 0 ? effectiveTargetParentId : resolvedIdByDepth.get(step.depth - 1);
 
       if (!parentId) {
@@ -737,18 +836,30 @@ export default function App() {
     if (newFolders.length > 0) {
       setFolders((current) => [...current, ...newFolders]);
       // Plan neu berechnen, damit erstellte Ordner als "Vorhanden" erscheinen und nicht erneut erstellt werden.
-      setFolderPlan(buildFolderCreationPlan(currentMatrix, [...folders, ...newFolders], effectiveTargetParentId));
+      setFolderPlan(buildFolderPlans(activeMatrices, [...folders, ...newFolders], effectiveTargetParentId));
     }
 
     setAllowCreateFolders(false);
     setBusy("");
     setProgress({ current: 0, total: 0, label: "" });
+    if (cancelled) addLog("warning", "Ordner-Erstellung abgebrochen. Bereits erstellte Ordner bleiben bestehen.");
     addLog("info", `Ordner-Erstellung fertig. Erstellt: ${created}, Fehler: ${failed}.`);
 
-    // Ordnerbaum automatisch neu einlesen und Plan daraus aktualisieren.
+    // Ordnerbaum automatisch neu einlesen und Plan daraus aktualisieren; verbleibende Luecken melden.
     const tree = await scanFolders();
     if (tree.length > 0) {
-      setFolderPlan(buildFolderCreationPlan(currentMatrix, tree, effectiveTargetParentId));
+      const verified = buildFolderPlans(activeMatrices, tree, effectiveTargetParentId);
+      setFolderPlan(verified);
+      const stillMissing = verified.filter((step) => step.status === "create");
+      if (stillMissing.length > 0) {
+        addLog(
+          "warning",
+          `Kontrolle: ${stillMissing.length} Ordner fehlen nach dem Neu-Scan weiterhin.`,
+          stillMissing.slice(0, 30).map((step) => step.path).join("\n")
+        );
+      } else {
+        addLog("success", `Kontrolle: Alle ${verified.length} Ordner sind in Trimble vorhanden.`);
+      }
     }
     if (failed > 0) setActiveTab("log");
   }
@@ -766,7 +877,10 @@ export default function App() {
       const stripPrefix = (id: string) => id.replace(/^[a-z-]+:/i, "").toLowerCase();
       const groupIdByTeam = new Map(activeGroups.map((group) => [normalizeLookup(group.name), stripPrefix(group.id)]));
 
-      const plans = workbook.matrices.map((matrix) => ({ matrix, items: buildPermissionPlan(matrix, activeGroups, activeFolders) }));
+      const plans = workbook.matrices.map((matrix) => ({
+        matrix,
+        items: buildPermissionPlan(matrix, activeGroups, activeFolders, { targetParentId: effectiveTargetParentId }),
+      }));
       const total = plans.reduce((sum, entry) => sum + entry.items.filter((item) => item.folderId).length, 0);
       let done = 0;
       let failed = 0;
@@ -830,17 +944,57 @@ export default function App() {
     }
   }
 
+  const normalizeActorId = (id: string) => id.replace(/^[a-z-]+:/i, "").toLowerCase();
+
+  // Stimmt der Ist-Stand eines Ordners mit den Matrix-Teams ueberein? Zusaetzliche Teams/Benutzer zaehlen nicht.
+  function aclMatches(item: PermissionPlanItem, current: { READ: string[]; FULL_ACCESS: string[] }): boolean {
+    const full = new Set(current.FULL_ACCESS.map(normalizeActorId));
+    const read = new Set(current.READ.map(normalizeActorId));
+    return (
+      item.acl.FULL_ACCESS.every((id) => full.has(normalizeActorId(id))) &&
+      item.acl.READ.every((id) => read.has(normalizeActorId(id)) && !full.has(normalizeActorId(id))) &&
+      item.acl.NO_ACCESS.every((id) => !full.has(normalizeActorId(id)) && !read.has(normalizeActorId(id)))
+    );
+  }
+
   async function createDryRun() {
-    if (!currentMatrix) {
-      addLog("warning", "Bitte zuerst eine Phase aus der Matrix waehlen.");
+    if (activeMatrices.length === 0) {
+      addLog("warning", allSheets ? "Keine Tabellenblaetter ausgewaehlt." : "Bitte zuerst eine Phase aus der Matrix waehlen.");
       return;
     }
+    if (hasAmbiguousSheetNames(activeMatrices)) return;
 
     setBusy("dry-run");
+    cancelRef.current = false;
     try {
       const activeGroups = groups.length > 0 ? groups : await loadGroups();
       const activeFolders = folders.length > 0 ? folders : await scanFolders();
-      const nextPlan = buildPermissionPlan(currentMatrix, activeGroups, activeFolders);
+      setBusy("dry-run");
+
+      const options = { targetParentId: effectiveTargetParentId, strict: allSheets };
+      const nextPlan = activeMatrices.flatMap((matrix) => buildPermissionPlan(matrix, activeGroups, activeFolders, options));
+
+      // Zwei Zeilen mit unterschiedlichen Rechten auf demselben Ordner: nicht anwenden, sondern melden.
+      const byFolder = new Map<string, PermissionPlanItem[]>();
+      nextPlan.forEach((item) => {
+        if (item.folderId) byFolder.set(item.folderId, [...(byFolder.get(item.folderId) ?? []), item]);
+      });
+      const signature = (item: PermissionPlanItem) =>
+        JSON.stringify([[...item.acl.FULL_ACCESS].sort(), [...item.acl.READ].sort(), [...item.acl.NO_ACCESS].sort()]);
+      const conflicts: string[] = [];
+      byFolder.forEach((items) => {
+        if (items.length > 1 && new Set(items.map(signature)).size > 1) {
+          items.forEach((item) => {
+            item.applyError = "Mehrere Matrix-Zeilen mit unterschiedlichen Rechten zeigen auf denselben Ordner.";
+            item.folderId = undefined;
+            item.status = "missing-folder";
+          });
+          conflicts.push(items.map((item) => item.folderPath).join("  <->  "));
+        }
+      });
+      if (conflicts.length > 0) {
+        addLog("error", `${conflicts.length} Konflikt(e): mehrere Matrix-Zeilen zeigen auf denselben Trimble-Ordner und werden ausgelassen.`, conflicts.slice(0, 30).join("\n"));
+      }
       setPlan(nextPlan);
 
       // Abgleich mit dem Ist-Stand in Trimble: stimmen die Berechtigungen schon, gilt die Zeile als erledigt.
@@ -848,21 +1002,18 @@ export default function App() {
       const candidates = nextPlan.filter((item) => item.folderId && item.status !== "missing-folder");
       if (projectId && candidates.length > 0) {
         const appliedMap = loadAppliedMap(projectId);
-        const norm = (id: string) => id.replace(/^[a-z-]+:/i, "").toLowerCase();
         let matched = 0;
         let checked = 0;
         setProgress({ current: 0, total: candidates.length, label: "Ist-Stand abgleichen" });
 
         for (const item of candidates) {
+          if (cancelRef.current) {
+            addLog("warning", `Abgleich abgebrochen: ${candidates.length - checked} Ordner wurden nicht geprueft (gelten als noch offen).`);
+            break;
+          }
           try {
             const current = await client.getFolderPermissions(item.folderId!);
-            const full = new Set(current.FULL_ACCESS.map(norm));
-            const read = new Set(current.READ.map(norm));
-            const same =
-              item.acl.FULL_ACCESS.every((id) => full.has(norm(id))) &&
-              item.acl.READ.every((id) => read.has(norm(id)) && !full.has(norm(id))) &&
-              item.acl.NO_ACCESS.every((id) => !full.has(norm(id)) && !read.has(norm(id)));
-            if (same) {
+            if (aclMatches(item, current)) {
               const appliedAt = appliedMap[item.folderId!] ?? new Date().toISOString();
               appliedMap[item.folderId!] = appliedAt;
               matched += 1;
@@ -880,10 +1031,19 @@ export default function App() {
         addLog("info", `Abgleich: ${matched} von ${candidates.length} Ordnern stimmen bereits mit der Matrix ueberein (erledigt).`);
       }
 
+      if (activeMatrices.length > 1) {
+        activeMatrices.forEach((matrix) => {
+          const items = nextPlan.filter((item) => item.sheetName === matrix.sheetName);
+          addLog(
+            "info",
+            `${matrix.sheetName}: ${items.filter((item) => item.status === "ready").length} bereit, ${items.filter((item) => item.status === "missing-folder").length} Ordner fehlen, ${items.filter((item) => item.status === "missing-groups").length} mit fehlenden Gruppen.`
+          );
+        });
+      }
       const ready = nextPlan.filter((item) => item.status === "ready").length;
       const missingFolders = nextPlan.filter((item) => item.status === "missing-folder").length;
       const missingGroups = nextPlan.filter((item) => item.status === "missing-groups").length;
-      addLog("info", `Dry-Run erstellt: ${ready} bereit, ${missingFolders} Ordner fehlen, ${missingGroups} mit fehlenden Gruppen.`);
+      addLog("info", `Dry-Run erstellt (${activeMatrices.length} Blatt/Blaetter): ${ready} bereit, ${missingFolders} Ordner fehlen, ${missingGroups} mit fehlenden Gruppen.`);
     } finally {
       setBusy("");
       setProgress({ current: 0, total: 0, label: "" });
@@ -912,11 +1072,28 @@ export default function App() {
       return;
     }
 
+    const sheetCount = new Set(readyItems.map((item) => item.sheetName)).size;
+    if (
+      sheetCount > 1 &&
+      !window.confirm(`Berechtigungen auf ${readyItems.length} Ordner in ${sheetCount} Tabellenblaettern anwenden?\n\nDer Vorgang kann lange dauern und laesst sich im Protokoll nachvollziehen. Mit "Abbrechen" im Fortschrittsbalken kann er jederzeit gestoppt werden.`)
+    ) {
+      return;
+    }
+
     setBusy("apply");
+    cancelRef.current = false;
     setProgress({ current: 0, total: readyItems.length, label: "Berechtigungen anwenden" });
 
     let applied = 0;
+    let failed = 0;
+    let processed = 0;
+    const appliedItems: PermissionPlanItem[] = [];
     for (let index = 0; index < readyItems.length; index += 1) {
+      if (cancelRef.current) {
+        addLog("warning", `Abgebrochen: ${readyItems.length - index} Ordner wurden nicht bearbeitet. Bereits angewendete bleiben bestehen.`);
+        break;
+      }
+      processed += 1;
       const item = readyItems[index];
       const oversized = (["READ", "FULL_ACCESS"] as const).filter((level) => item.acl[level].length > 100);
 
@@ -927,6 +1104,7 @@ export default function App() {
           `Uebersprungen: ${item.folderPath} hat mehr als 100 Gruppen bei ${oversized.join(", ")} (API-Limit).`,
           "Diese Zeile muss manuell in mehreren Schritten in Trimble Connect gepflegt werden."
         );
+        failed += 1;
         markPlanItem(item.rowNumber, item.folderPath, { applyError: message });
         setProgress({ current: index + 1, total: readyItems.length, label: "Berechtigungen anwenden" });
         continue;
@@ -949,21 +1127,54 @@ export default function App() {
         }
         await client.updateFolderPermissions(item.folderId!, merged, false);
         applied += 1;
+        appliedItems.push(item);
         const appliedAt = new Date().toISOString();
         if (effectiveProject?.id) {
           saveAppliedMap(effectiveProject.id, { ...loadAppliedMap(effectiveProject.id), [item.folderId!]: appliedAt });
         }
         markPlanItem(item.rowNumber, item.folderPath, { appliedAt, applyError: undefined });
       } catch (error) {
+        failed += 1;
         addLog("error", `Berechtigungen fehlgeschlagen: ${item.folderPath}.`, formatError(error));
         markPlanItem(item.rowNumber, item.folderPath, { applyError: formatError(error) });
       }
       setProgress({ current: index + 1, total: readyItems.length, label: "Berechtigungen anwenden" });
     }
 
+    // Kontrolle: angewendete Ordner zurueckliesen und mit der Matrix vergleichen.
+    let verifyFailed = 0;
+    if (appliedItems.length > 0 && !cancelRef.current) {
+      setProgress({ current: 0, total: appliedItems.length, label: "Ergebnis kontrollieren" });
+      const appliedMap = effectiveProject?.id ? loadAppliedMap(effectiveProject.id) : {};
+      for (let index = 0; index < appliedItems.length; index += 1) {
+        if (cancelRef.current) {
+          addLog("warning", "Kontrolle abgebrochen.");
+          break;
+        }
+        const item = appliedItems[index];
+        try {
+          const current = await client.getFolderPermissions(item.folderId!);
+          if (!aclMatches(item, current)) {
+            verifyFailed += 1;
+            delete appliedMap[item.folderId!];
+            markPlanItem(item.rowNumber, item.folderPath, { appliedAt: undefined, applyError: "Kontrolle: Berechtigungen in Trimble weichen von der Matrix ab." });
+            addLog("error", `Kontrolle fehlgeschlagen: ${item.folderPath} weicht nach dem Anwenden von der Matrix ab.`);
+          }
+        } catch (error) {
+          addLog("warning", `Kontrolle nicht moeglich: ${item.folderPath}.`, formatError(error));
+        }
+        setProgress({ current: index + 1, total: appliedItems.length, label: "Ergebnis kontrollieren" });
+      }
+      if (effectiveProject?.id) saveAppliedMap(effectiveProject.id, appliedMap);
+    }
+
     setBusy("");
     setProgress({ current: 0, total: 0, label: "" });
-    addLog("success", `${applied} Ordner aktualisiert.`);
+    addLog(
+      failed + verifyFailed > 0 ? "warning" : "success",
+      `${applied} Ordner aktualisiert, ${failed} Fehler, ${verifyFailed} bei der Kontrolle abweichend, ${readyItems.length - processed} nicht bearbeitet.`
+    );
+    if (failed + verifyFailed > 0) setActiveTab("log");
   }
 
   const isBusy = busy.length > 0;
@@ -1121,6 +1332,10 @@ export default function App() {
             selectedSheet={selectedSheet}
             setSelectedSheet={setSelectedSheet}
             currentMatrix={currentMatrix}
+            allSheets={allSheets}
+            excludedSheets={excludedSheets}
+            onScopeChange={changeScope}
+            scopeStats={scopeStats}
             folders={folders}
             projectDetails={projectDetails}
             progress={progress}
@@ -1151,6 +1366,10 @@ export default function App() {
             selectedSheet={selectedSheet}
             setSelectedSheet={setSelectedSheet}
             currentMatrix={currentMatrix}
+            allSheets={allSheets}
+            excludedSheets={excludedSheets}
+            onScopeChange={changeScope}
+            scopeStats={scopeStats}
             folders={folders}
             groups={groups}
             projectDetails={projectDetails}
@@ -1192,6 +1411,11 @@ export default function App() {
           <span>{progress.label}</span>
           <progress value={progress.current} max={progress.total} />
           <strong>{progress.current}/{progress.total}</strong>
+          {isBusy && busy !== "folders" && (
+            <button onClick={() => { cancelRef.current = true; }} title="Laufenden Vorgang nach dem aktuellen Schritt stoppen. Bereits Erledigtes bleibt bestehen.">
+              Abbrechen
+            </button>
+          )}
         </footer>
       )}
     </div>
@@ -1430,6 +1654,10 @@ interface FoldersTabProps {
   selectedSheet: string;
   setSelectedSheet: (sheet: string) => void;
   currentMatrix: PermissionMatrix | null;
+  allSheets: boolean;
+  excludedSheets: Record<string, boolean>;
+  onScopeChange: (allSheets: boolean, excludedSheets: Record<string, boolean>) => void;
+  scopeStats: ScopeStats;
   folders: TCFolder[];
   projectDetails: TCProject | null;
   progress: ProgressState;
@@ -1472,15 +1700,19 @@ function FoldersTab(props: FoldersTabProps) {
       <section className="panel">
         <h2>Phase</h2>
         <FileInput disabled={props.busy} onFile={props.onWorkbook} />
-        <label className="field">
-          <span>Tabellenblatt</span>
-          <select value={props.selectedSheet} onChange={(event) => props.setSelectedSheet(event.target.value)}>
-            {props.workbook?.sheetNames.map((sheet) => <option key={sheet} value={sheet}>{sheet}</option>)}
-          </select>
-        </label>
+        <SheetScope
+          workbook={props.workbook}
+          selectedSheet={props.selectedSheet}
+          setSelectedSheet={props.setSelectedSheet}
+          allSheets={props.allSheets}
+          excludedSheets={props.excludedSheets}
+          onScopeChange={props.onScopeChange}
+          disabled={props.busy}
+        />
         <MetricGrid
           metrics={[
-            ["Ordner in Matrix", props.currentMatrix?.stats.folders ?? 0],
+            ...(props.allSheets ? ([["Blätter", props.scopeStats.sheets]] as Array<[string, number]>) : []),
+            ["Ordner in Matrix", props.scopeStats.folders],
             ["Gescannt", props.folders.length],
           ]}
         />
@@ -1492,7 +1724,7 @@ function FoldersTab(props: FoldersTabProps) {
       <section className="panel">
         <h2>Zielordner</h2>
         <p className="hint">
-          Wohin der Phasenordner (Blattname <strong>{props.currentMatrix?.sheetName ?? "–"}</strong>) kommt,
+          Wohin {props.allSheets ? "die Phasenordner (je Blattname)" : <>der Phasenordner (Blattname <strong>{props.currentMatrix?.sheetName ?? "–"}</strong>)</>} kommt,
           falls er noch fehlt.
         </p>
         <label className="field">
@@ -1532,7 +1764,7 @@ function FoldersTab(props: FoldersTabProps) {
           </div>
         </div>
         <div className="inline-actions">
-          <button className="primary" onClick={props.onPlanFolders} disabled={props.busy || !props.currentMatrix}>
+          <button className="primary" onClick={props.onPlanFolders} disabled={props.busy || props.scopeStats.sheets === 0}>
             Ordner-Plan erstellen
           </button>
         </div>
@@ -1647,6 +1879,10 @@ interface PermissionsTabProps {
   selectedSheet: string;
   setSelectedSheet: (sheet: string) => void;
   currentMatrix: PermissionMatrix | null;
+  allSheets: boolean;
+  excludedSheets: Record<string, boolean>;
+  onScopeChange: (allSheets: boolean, excludedSheets: Record<string, boolean>) => void;
+  scopeStats: ScopeStats;
   folders: TCFolder[];
   groups: TCGroup[];
   projectDetails: TCProject | null;
@@ -1678,19 +1914,23 @@ function PermissionsTab(props: PermissionsTabProps) {
       <section className="panel">
         <h2>Phase</h2>
         <FileInput disabled={props.busy} onFile={props.onWorkbook} />
-        <label className="field">
-          <span>Tabellenblatt</span>
-          <select value={props.selectedSheet} onChange={(event) => props.setSelectedSheet(event.target.value)}>
-            {props.workbook?.sheetNames.map((sheet) => <option key={sheet} value={sheet}>{sheet}</option>)}
-          </select>
-        </label>
+        <SheetScope
+          workbook={props.workbook}
+          selectedSheet={props.selectedSheet}
+          setSelectedSheet={props.setSelectedSheet}
+          allSheets={props.allSheets}
+          excludedSheets={props.excludedSheets}
+          onScopeChange={props.onScopeChange}
+          disabled={props.busy}
+        />
         <MetricGrid
           metrics={[
-            ["Ordner", props.currentMatrix?.stats.folders ?? 0],
-            ["Teams", props.currentMatrix?.stats.teams ?? 0],
-            ["Voll", props.currentMatrix?.stats.fullAccess ?? 0],
-            ["Lesen", props.currentMatrix?.stats.read ?? 0],
-            ["Kein", props.currentMatrix?.stats.noAccess ?? 0],
+            ...(props.allSheets ? ([["Blätter", props.scopeStats.sheets]] as Array<[string, number]>) : []),
+            ["Ordner", props.scopeStats.folders],
+            ["Teams", props.scopeStats.teams],
+            ["Voll", props.scopeStats.fullAccess],
+            ["Lesen", props.scopeStats.read],
+            ["Kein", props.scopeStats.noAccess],
           ]}
         />
       </section>
@@ -1707,7 +1947,7 @@ function PermissionsTab(props: PermissionsTabProps) {
         <div className="inline-actions">
           <button onClick={props.onLoadGroups} disabled={props.busy}>Gruppen laden</button>
           <button onClick={props.onScanFolders} disabled={props.busy}>Ordner scannen</button>
-          <button className="primary" onClick={props.onDryRun} disabled={props.busy || !props.currentMatrix}>Dry-Run</button>
+          <button className="primary" onClick={props.onDryRun} disabled={props.busy || props.scopeStats.sheets === 0}>Dry-Run</button>
           <button
             onClick={props.onExport}
             disabled={props.busy || !props.workbook}
@@ -1766,6 +2006,9 @@ function PermissionsTab(props: PermissionsTabProps) {
             Berechtigungen anwenden
           </button>
         </div>
+        {props.plan.length > PLAN_DISPLAY_LIMIT && (
+          <div className="banner info">Angezeigt werden die ersten {PLAN_DISPLAY_LIMIT} von {props.plan.length} Zeilen; verarbeitet werden alle.</div>
+        )}
         <div className="table-wrap plan-table">
           <table>
             <thead>
@@ -1779,7 +2022,7 @@ function PermissionsTab(props: PermissionsTabProps) {
               </tr>
             </thead>
             <tbody>
-              {props.plan.slice(0, 120).map((item) => {
+              {props.plan.slice(0, PLAN_DISPLAY_LIMIT).map((item) => {
                 const display = planRowDisplay(item);
                 return (
                   <tr key={`${item.rowNumber}-${item.folderPath}`}>
@@ -1842,6 +2085,71 @@ function FileInput({ disabled, onFile }: { disabled: boolean; onFile: (file: Fil
       />
       <span>Excel-Matrix laden</span>
     </label>
+  );
+}
+
+const PLAN_DISPLAY_LIMIT = 3000;
+
+interface ScopeStats {
+  sheets: number;
+  folders: number;
+  teams: number;
+  fullAccess: number;
+  read: number;
+  noAccess: number;
+}
+
+interface SheetScopeProps {
+  workbook: WorkbookModel | null;
+  selectedSheet: string;
+  setSelectedSheet: (sheet: string) => void;
+  allSheets: boolean;
+  excludedSheets: Record<string, boolean>;
+  onScopeChange: (allSheets: boolean, excludedSheets: Record<string, boolean>) => void;
+  disabled: boolean;
+}
+
+function SheetScope(props: SheetScopeProps) {
+  const sheets = props.workbook?.sheetNames ?? [];
+  const includedCount = sheets.filter((sheet) => !props.excludedSheets[sheet]).length;
+
+  return (
+    <>
+      <label className="field">
+        <span>Tabellenblatt</span>
+        <select
+          value={props.selectedSheet}
+          onChange={(event) => props.setSelectedSheet(event.target.value)}
+          disabled={props.allSheets}
+        >
+          {sheets.map((sheet) => <option key={sheet} value={sheet}>{sheet}</option>)}
+        </select>
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={props.allSheets}
+          disabled={props.disabled || sheets.length === 0}
+          onChange={(event) => props.onScopeChange(event.target.checked, props.excludedSheets)}
+        />
+        <span>Alle Tabellenblätter ({includedCount} von {sheets.length} gewählt)</span>
+      </label>
+      {props.allSheets && (
+        <div className="sheet-list">
+          {sheets.map((sheet) => (
+            <label key={sheet} className="check">
+              <input
+                type="checkbox"
+                checked={!props.excludedSheets[sheet]}
+                disabled={props.disabled}
+                onChange={() => props.onScopeChange(true, { ...props.excludedSheets, [sheet]: !props.excludedSheets[sheet] })}
+              />
+              <span>{sheet}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 

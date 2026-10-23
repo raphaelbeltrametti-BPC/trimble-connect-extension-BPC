@@ -126,3 +126,11 @@ public/
 5. Ordner scannen.
 6. Dry-Run pruefen.
 7. Erst danach `Aenderungen wirklich anwenden` aktivieren.
+
+## Alle Tabellenblaetter
+
+In den Registern "Ordner erstellen" und "Berechtigungen" kann statt eines einzelnen Blatts die Option
+"Alle Tabellenblaetter" gewaehlt werden (einzelne Blaetter abwaehlbar). Ordner-Plan, Erstellen, Dry-Run und
+Anwenden laufen dann ueber alle gewaehlten Blaetter. Bei mehreren Blaettern werden Zeilen nur ueber den exakten
+Pfad unterhalb des Phasenordners aufgeloest (keine Treffer in anderen Phasen). Lange Laeufe erneuern das Token
+automatisch, wiederholen kurzzeitige Fehler (429/5xx), sind abbrechbar und enden mit einer Kontrolle.

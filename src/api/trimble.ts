@@ -13,6 +13,8 @@ export const API_BASE_URLS: Record<Exclude<ApiRegion, "custom">, string> = {
 interface TrimbleClientOptions {
   baseUrl: string;
   getToken: () => Promise<string>;
+  /** Fordert bei einem 401 ein frisches Token an (lange Laeufe ueberdauern die Token-Laufzeit). */
+  refreshToken?: () => Promise<string>;
   delayMs?: number;
 }
 
@@ -65,12 +67,14 @@ export class TrimbleApiError extends Error {
 export class TrimbleClient {
   private readonly baseUrl: string;
   private readonly getToken: () => Promise<string>;
+  private readonly refreshToken?: () => Promise<string>;
   private readonly delayMs: number;
   private lastRequestAt = 0;
 
   constructor(options: TrimbleClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.getToken = options.getToken;
+    this.refreshToken = options.refreshToken;
     this.delayMs = options.delayMs ?? 250;
   }
 
@@ -394,30 +398,54 @@ export class TrimbleClient {
   }
 
   private async requestRaw(pathOrUrl: string, init: RequestInit = {}): Promise<{ body: string; headers: Headers }> {
-    await this.waitForSlot();
-
-    const token = await this.getToken();
-    if (!token) {
-      throw new TrimbleApiError(401, "Kein Access Token vorhanden.", "");
-    }
-
     const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${this.baseUrl}${pathOrUrl}`;
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        ...(init.headers ?? {}),
-      },
-    });
+    const maxRetries = 4;
+    let refreshed = false;
 
-    const body = await response.text();
-    if (!response.ok) {
+    for (let attempt = 0; ; attempt += 1) {
+      await this.waitForSlot();
+
+      const token = await this.getToken();
+      if (!token) {
+        throw new TrimbleApiError(401, "Kein Access Token vorhanden.", "");
+      }
+
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          ...init,
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            ...(init.headers ?? {}),
+          },
+        });
+      } catch (networkError) {
+        // Kurzer Netzwerkausfall: bei langen Laeufen nicht sofort abbrechen.
+        if (attempt >= maxRetries) throw networkError;
+        await sleep(1000 * 2 ** attempt);
+        continue;
+      }
+
+      const body = await response.text();
+      if (response.ok) return { body, headers: response.headers };
+
+      if (response.status === 401 && this.refreshToken && !refreshed) {
+        refreshed = true;
+        await this.refreshToken();
+        continue;
+      }
+
+      const transient = [429, 502, 503, 504].includes(response.status);
+      if (transient && attempt < maxRetries) {
+        const retryAfter = Number(response.headers.get("Retry-After"));
+        await sleep(retryAfter > 0 ? Math.min(retryAfter, 30) * 1000 : 1000 * 2 ** attempt);
+        continue;
+      }
+
       throw new TrimbleApiError(response.status, `${response.status} ${response.statusText}`, body);
     }
-
-    return { body, headers: response.headers };
   }
 
   private async waitForSlot(): Promise<void> {
@@ -428,6 +456,10 @@ export class TrimbleClient {
     }
     this.lastRequestAt = Date.now();
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function isFolder(item: RawFolderItem): boolean {

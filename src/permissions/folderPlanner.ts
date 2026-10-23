@@ -31,6 +31,7 @@ export function buildFolderCreationPlan(
 
   const phaseRoot = findChild(targetParentId, matrix.sheetName);
   steps.push({
+    sheetName: matrix.sheetName,
     rowNumber: 0,
     depth: 0,
     name: matrix.sheetName,
@@ -50,6 +51,7 @@ export function buildFolderCreationPlan(
     const existing = parentId ? findChild(parentId, row.folderName) : undefined;
 
     steps.push({
+      sheetName: matrix.sheetName,
       rowNumber: row.rowNumber,
       depth: row.depth + 1,
       name: row.folderName,

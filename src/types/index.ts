@@ -63,6 +63,7 @@ export interface FolderAcl {
 }
 
 export interface FolderCreationStep {
+  sheetName: string;
   rowNumber: number;
   depth: number;
   name: string;
@@ -72,6 +73,7 @@ export interface FolderCreationStep {
 }
 
 export interface PermissionPlanItem {
+  sheetName: string;
   rowNumber: number;
   folderPath: string;
   folderName: string;
