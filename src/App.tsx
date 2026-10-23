@@ -61,6 +61,7 @@ export default function App() {
   const [targetParentFilter, setTargetParentFilter] = useState("");
   const [folderPlan, setFolderPlan] = useState<FolderCreationStep[]>([]);
   const [allowCreateFolders, setAllowCreateFolders] = useState(false);
+  const [extraMarks, setExtraMarks] = useState<Record<string, boolean>>({});
 
   const snapshot: HistorySnapshot = { workbook, selectedSheet, groups, deleteMarks, folders, folderPlan, plan, targetParentId };
   const lastSnapshotRef = useRef<HistorySnapshot>(snapshot);
@@ -405,6 +406,57 @@ export default function App() {
       groups.filter((group) => (deleteMarks[group.id] ?? unused.has(group.id))).map((group) => group.id)
     );
   }, [deleteMarks, groups, unusedGroups]);
+
+  // Ordner unterhalb des Phasenordners, die nicht in der Matrix vorkommen (nur oberste Ebene je Zweig).
+  // Standardmaessig zum Entfernen vorgemerkt; pro Zeile uebersteuerbar.
+  const extraFolders = useMemo(() => {
+    const root = folderPlan[0];
+    if (!root?.folderId) return [];
+    const rootFolder = folders.find((folder) => folder.id === root.folderId);
+    if (!rootFolder) return [];
+    const matched = new Set(folderPlan.map((step) => step.folderId).filter(Boolean) as string[]);
+    return folders.filter(
+      (folder) =>
+        !matched.has(folder.id) &&
+        !!folder.parentId &&
+        matched.has(folder.parentId) &&
+        folder.path.startsWith(`${rootFolder.path}/`)
+    );
+  }, [folderPlan, folders]);
+
+  const markedExtraIds = useMemo(
+    () => new Set(extraFolders.filter((folder) => extraMarks[folder.id] ?? true).map((folder) => folder.id)),
+    [extraFolders, extraMarks]
+  );
+
+  async function removeExtraFolders() {
+    const toDelete = extraFolders.filter((folder) => markedExtraIds.has(folder.id));
+    if (toDelete.length === 0 || !currentMatrix || !effectiveTargetParentId) return;
+    const names = toDelete.map((folder) => folder.path).join("\n");
+    if (!window.confirm(`${toDelete.length} Ordner inkl. Inhalt in Trimble Connect endgueltig loeschen?\n\n${names}`)) return;
+
+    setBusy("delete-folders");
+    setProgress({ current: 0, total: toDelete.length, label: "Ordner entfernen" });
+    let deleted = 0;
+    for (let index = 0; index < toDelete.length; index += 1) {
+      const folder = toDelete[index];
+      try {
+        await client.deleteFolder(folder.id);
+        deleted += 1;
+        addLog("success", `Ordner entfernt: ${folder.path}.`);
+      } catch (error) {
+        addLog("error", `Ordner konnte nicht entfernt werden: ${folder.path}.`, formatError(error));
+      }
+      setProgress({ current: index + 1, total: toDelete.length, label: "Ordner entfernen" });
+    }
+    setExtraMarks({});
+    setBusy("");
+    setProgress({ current: 0, total: 0, label: "" });
+    addLog("info", `Ordner-Entfernung fertig. Entfernt: ${deleted}, Fehler: ${toDelete.length - deleted}.`);
+
+    const tree = await scanFolders();
+    if (tree.length > 0) setFolderPlan(buildFolderCreationPlan(currentMatrix, tree, effectiveTargetParentId));
+  }
 
   const planStats = useMemo(() => {
     const done = plan.filter((item) => item.appliedAt).length;
@@ -1085,6 +1137,10 @@ export default function App() {
             setAllowCreateFolders={setAllowCreateFolders}
             onPlanFolders={planMissingFolders}
             onCreateFolders={createMissingFolders}
+            extraFolders={extraFolders}
+            markedExtraIds={markedExtraIds}
+            onToggleExtra={(id) => setExtraMarks((current) => ({ ...current, [id]: !markedExtraIds.has(id) }))}
+            onRemoveExtra={removeExtraFolders}
           />
         )}
 
@@ -1390,6 +1446,10 @@ interface FoldersTabProps {
   setAllowCreateFolders: (value: boolean) => void;
   onPlanFolders: () => void;
   onCreateFolders: () => void;
+  extraFolders: TCFolder[];
+  markedExtraIds: Set<string>;
+  onToggleExtra: (id: string) => void;
+  onRemoveExtra: () => void;
 }
 
 function FoldersTab(props: FoldersTabProps) {
@@ -1517,6 +1577,66 @@ function FoldersTab(props: FoldersTabProps) {
           </table>
         </div>
       </section>
+
+      {props.extraFolders.length > 0 && (
+        <section className="panel span-2">
+          <div className="panel-title-row">
+            <h2>Nicht in der Matrix</h2>
+            <div className="summary-pills">
+              <span className="pill warn">{props.markedExtraIds.size} werden entfernt</span>
+              <span className="pill ok">{props.extraFolders.length - props.markedExtraIds.size} bleiben</span>
+            </div>
+          </div>
+          <p className="hint">
+            Diese Ordner existieren in Trimble, kommen aber nicht in der Matrix vor. Haken pro Zeile entfernen = Ordner bleibt.
+            Beim Entfernen wird auch der Inhalt geloescht.
+          </p>
+          <div className="apply-row">
+            <button
+              className="danger"
+              onClick={props.onRemoveExtra}
+              disabled={props.busy || props.markedExtraIds.size === 0}
+            >
+              Markierte Ordner entfernen ({props.markedExtraIds.size})
+            </button>
+          </div>
+          <div className="table-wrap plan-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Pfad</th>
+                  <th>Entfernen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...props.extraFolders]
+                  .sort((a, b) => a.path.localeCompare(b.path, "de"))
+                  .map((folder) => {
+                    const marked = props.markedExtraIds.has(folder.id);
+                    return (
+                      <tr key={folder.id} className={marked ? "marked-delete" : undefined}>
+                        <td>
+                          <span className={`state ${marked ? "missing-folder" : "ready"}`}>{marked ? "Wird entfernt" : "Bleibt"}</span>
+                        </td>
+                        <td>{folder.path}</td>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={marked}
+                            disabled={props.busy}
+                            onChange={() => props.onToggleExtra(folder.id)}
+                            aria-label={`${folder.path} entfernen`}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

@@ -211,6 +211,10 @@ export class TrimbleClient {
     };
   }
 
+  async deleteFolder(folderId: string): Promise<void> {
+    await this.request(`/folders/${encodeURIComponent(folderId)}`, { method: "DELETE" });
+  }
+
   /**
    * Looks up a direct child (folder OR file) by name, case-insensitively. Used to resolve a
    * 409 DUPLICATE_NAME on createFolder: the name is taken, but the scanned tree didn't know it.
